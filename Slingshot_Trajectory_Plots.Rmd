@@ -1,0 +1,1945 @@
+---
+title: "HEN CD4 Slingshot analysis: Density plots  + CytoTrace Density plot"
+output: html_notebook
+---
+
+
+```{r}
+library(Seurat)
+library(ggplot2)
+library(harmony)
+library(SingleCellExperiment)
+library(slingshot)
+library(scales)
+library(viridis)
+library(UpSetR)
+library(pheatmap)
+library(msigdbr)
+library(fgsea)
+library(knitr)
+library(gridExtra)
+library(tradeSeq)
+library(RColorBrewer)
+```
+
+
+```{r}
+HEN_CD4_Biopsy <- readRDS("/Path/to/RDS/Object/HEN_CD4_Biopsy_fixed.rds")
+```
+
+
+```{r}
+DimPlot(HEN_CD4_Biopsy, reduction = "umap", label = TRUE, group.by = "ann_check_alt")
+```
+
+
+Convert to a SingleCellExperiment
+```{r}
+sce.HEN.CD4_all <- as.SingleCellExperiment(HEN_CD4_Biopsy, assay = "RNA")
+```
+
+
+All steps at once (I read in the TradeSeq paper , and the Slingshot github, that starting from the pca reduction is recommended. Why?)
+
+```{r}
+sce.HEN.CD4_all_slinged <- slingshot(sce.HEN.CD4_all, 
+                                     clusterLabels = sce.HEN.CD4_all$ann_check_alt, 
+                                     reducedDim = reducedDims(sce.HEN.CD4_all)$UMAP, 
+                                     start.clus = "CD4_EM (Naive focus)",
+                                     end.clus = c("CD4_FH", "CD4_Th1", "CD4_Th17"),
+                                     approx_points = 0)
+sds <- as.SlingshotDataSet(sce.HEN.CD4_all_slinged)
+```
+
+
+
+Running with all samples and only the 2 Response groups shows that the is basically no difference
+```{r}
+plot(reducedDims(sce.HEN.CD4_all)$UMAP, col = sce.HEN.CD4_all$color, asp = 1, pch = 16)
+lines(as.SlingshotDataSet(sce.HEN.CD4_all_slinged), lwd = 2, col = 'black')
+title("HEN: CD4 Lineages")
+```
+
+
+
+Create DimPlot and overlay the lineages on the plot
+```{r}
+HEN_CD4_Biopsy_CellType_Trajectory_overlay <- DimPlot(HEN_CD4_Biopsy, label = TRUE, label.size = 6, pt.size = 0.75, reduction = "umap", group.by = "ann_check_alt", repel = TRUE, cols = c("#CF9400", "#F8766D", "#00B81F", "#E7861B", "#00BC59")) +
+geom_path(data = as.data.frame(slingCurves(sds)[[1]]$s[slingCurves(sds)[[1]]$ord, ]), aes(UMAP_1, UMAP_2), size = 0.5, col = "black") +
+geom_path(data = as.data.frame(slingCurves(sds)[[2]]$s[slingCurves(sds)[[2]]$ord, ]), aes(UMAP_1, UMAP_2), size = 0.5, col = "black") +
+geom_path(data = as.data.frame(slingCurves(sds)[[3]]$s[slingCurves(sds)[[3]]$ord, ]), aes(UMAP_1, UMAP_2), size = 0.5, col = "black") +
+ggtitle("CD4 T-cells (subtypes)") + 
+theme(title = element_text(size =15),
+      axis.text = element_text(size = 10),
+      axis.title = element_text(size = 10),
+      legend.text = element_text(size = 10))
+```
+
+
+```{r}
+HEN_CD4_Biopsy_CellType_Trajectory_overlay
+```
+
+
+```{r}
+HEN_CD4_Biopsy_CellType_Trajectory_overlay_NoLabel <- DimPlot(HEN_CD4_Biopsy, label = FALSE, label.size = 6, pt.size = 0.75, reduction = "umap", group.by = "ann_check_alt", repel = TRUE, cols = c("#CF9400", "#F8766D", "#00B81F", "#E7861B", "#00BC59")) +
+geom_path(data = as.data.frame(slingCurves(sds)[[1]]$s[slingCurves(sds)[[1]]$ord, ]), aes(UMAP_1, UMAP_2), size = 0.5, col = "black") +
+geom_path(data = as.data.frame(slingCurves(sds)[[2]]$s[slingCurves(sds)[[2]]$ord, ]), aes(UMAP_1, UMAP_2), size = 0.5, col = "black") +
+geom_path(data = as.data.frame(slingCurves(sds)[[3]]$s[slingCurves(sds)[[3]]$ord, ]), aes(UMAP_1, UMAP_2), size = 0.5, col = "black") +
+ggtitle("CD4 T-cells (subtypes)") + 
+theme(title = element_text(size =15),
+      axis.text = element_text(size = 10),
+      axis.title = element_text(size = 10),
+      legend.text = element_text(size = 10))
+```
+
+
+```{r}
+HEN_CD4_Biopsy_CellType_Trajectory_overlay_NoLabel
+```
+
+```{r}
+ggsave("/Path/to/RDS/Object/CD4_Trajectory_overlay_UnLabled.pdf",
+       HEN_CD4_Biopsy_CellType_Trajectory_overlay_NoLabel,
+       width = 15, 
+       height = 15
+       )
+
+ggsave("/Path/to/RDS/Object/CD4_Trajectory_overlay_Labled.pdf",
+       HEN_CD4_Biopsy_CellType_Trajectory_overlay,
+       width = 15, 
+       height = 15
+       )
+```
+
+
+Save the slingshot object
+```{r}
+saveRDS(sce.HEN.CD4_all_slinged, "/Users/u0137395/Desktop/Trajectory_CD4_Amelie/RDS/Definitely_keep_this_one/sce.HEN.CD4_all_best_til_now.rds")
+```
+
+
+Select Cells based on SampleType values: On-treatment or Pre-treatment
+```{r}
+OnTreatment_cells <- HEN_CD4_Biopsy@meta.data$SampleType
+table(OnTreatment_cells)
+OnTreatment_cells[ OnTreatment_cells == "On-treatment"] <- TRUE
+table(OnTreatment_cells)
+OnTreatment_cells[ OnTreatment_cells == "Pre-treatment"] <- FALSE
+table(OnTreatment_cells)
+# Just to create the Boolean value needed for which
+OnTreatment_cells <- OnTreatment_cells == TRUE
+```
+
+Subset singleCellExperiment object for On-treatemnt cells (remove pre-treatment cells)
+```{r}
+sce.HEN.CD4_all_slinged.OnTreatment <- sce.HEN.CD4_all_slinged[, which(OnTreatment_cells) ]
+```
+
+Check lineage order and Cell Number
+```{r}
+as.SlingshotDataSet(sce.HEN.CD4_all_slinged.OnTreatment)
+```
+
+
+KS-test for the 3 lineages
+
+
+Lineage1: CD4_EM (Naive focus)  CD4_EM  CD4_Th1
+```{r}
+ks.test(slingPseudotime(sce.HEN.CD4_all_slinged.OnTreatment)[colData(sce.HEN.CD4_all_slinged.OnTreatment)$Treatment == "Durvalumab", 1],
+        slingPseudotime(sce.HEN.CD4_all_slinged.OnTreatment)[colData(sce.HEN.CD4_all_slinged.OnTreatment)$Treatment == "Durvalumab-Tremelimumab", 1], exact = TRUE)
+```
+
+Lineage2: CD4_EM (Naive focus)  CD4_EM  CD4_FH
+```{r}
+ks.test(slingPseudotime(sce.HEN.CD4_all_slinged.OnTreatment)[colData(sce.HEN.CD4_all_slinged.OnTreatment)$Treatment == "Durvalumab", 2],
+        slingPseudotime(sce.HEN.CD4_all_slinged.OnTreatment)[colData(sce.HEN.CD4_all_slinged.OnTreatment)$Treatment == "Durvalumab-Tremelimumab", 2], exact = TRUE)
+```
+
+Lineage3: CD4_EM (Naive focus)  CD4_EM  CD4_Th17
+```{r}
+ks.test(slingPseudotime(sce.HEN.CD4_all_slinged.OnTreatment)[colData(sce.HEN.CD4_all_slinged.OnTreatment)$Treatment == "Durvalumab", 3],
+        slingPseudotime(sce.HEN.CD4_all_slinged.OnTreatment)[colData(sce.HEN.CD4_all_slinged.OnTreatment)$Treatment == "Durvalumab-Tremelimumab", 3], exact = TRUE)
+```
+
+Correcting for some (unexpected) strange behavior with the density function. 
+Note: we cannot set all NA's to 0 as this inflates the values in the density plot.
+Furthermore we needed to triple check if the correct lineage was linked to the correct names assigned by us to make the correct plots
+
+
+Inspect cell-barcode pseudotime values across lineages
+```{r}
+PT <- slingPseudotime(sce.HEN.CD4_all_slinged.OnTreatment)
+#PT[is.na(PT)] <- 0
+head(PT)
+```
+
+
+Collect the barcodes related to the conditions of interest: Mono-therapy Vs. Combination-therapy
+```{r}
+Durvalumab_Cells <- rownames(HEN_CD4_Biopsy@meta.data[ c(HEN_CD4_Biopsy$SampleType == "On-treatment")  & c(HEN_CD4_Biopsy$Treatment == "Durvalumab"), ])
+Durvalumab_Tremelimumab_Cells <- rownames(HEN_CD4_Biopsy@meta.data[ c(HEN_CD4_Biopsy$SampleType == "On-treatment")  & c(HEN_CD4_Biopsy$Treatment == "Durvalumab-Tremelimumab"), ])
+```
+
+
+Inspect group sizes
+```{r}
+length(Durvalumab_Cells)
+length(Durvalumab_Tremelimumab_Cells)
+```
+
+
+
+lineages: 3 
+Lineage1: CD4_EM (Naive focus)  CD4_EM  CD4_Th1  
+Lineage2: CD4_EM (Naive focus)  CD4_EM  CD4_FH  
+Lineage3: CD4_EM (Naive focus)  CD4_EM  CD4_Th17
+
+
+
+Filter and split by lineage (remove NA values)
+```{r}
+PT_1 <- PT[!(is.na(PT[, 1])), 1]
+PT_2 <- PT[!(is.na(PT[, 2])), 2]
+PT_3 <- PT[!(is.na(PT[, 3])), 3]
+```
+
+
+Set group colours
+```{r}
+Density_colors <- c("#FF9933", "#3399FF")
+```
+
+
+Density-plot per lineage
+
+
+Lineage1: CD4_EM (Naive focus)  CD4_EM  CD4_Th1  
+```{r}
+ds <- list(Durvalumab = density(PT_1[names(PT_1) %in% Durvalumab_Cells]),
+           Durvalumab_Tremelimumab = density(PT_1[names(PT_1) %in% Durvalumab_Tremelimumab_Cells]))
+
+
+# Scale the pseudotime from 0 to 100
+ds$Durvalumab$x <- rescale(ds$Durvalumab$x, to = c(0, 100))
+ds$Durvalumab_Tremelimumab$x <- rescale(ds$Durvalumab_Tremelimumab$x, to = c(0, 100))
+
+xlim <- range(c(ds$Durvalumab$x, ds$Durvalumab_Tremelimumab$x))
+ylim <- range(c(ds$Durvalumab$y, ds$Durvalumab_Tremelimumab$y))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(ds$Durvalumab$x), ds$Durvalumab$x, max(ds$Durvalumab$x)), c(0, ds$Durvalumab$y, 0),
+  col = alpha(Density_colors[1], alpha = .5))
+
+polygon(c(min(ds$Durvalumab_Tremelimumab$x), ds$Durvalumab$x, max(ds$Durvalumab$x)), c(0, ds$Durvalumab_Tremelimumab$y, 0), # 2 midlle ones wrong?
+        col = alpha(Density_colors[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab (aPD-L1)", "Durvalumab-Tremelimumab (aPD-L1/aCTLA4)"), 
+       fill = alpha(Density_colors, alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 ", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+
+
+Lineage2: CD4_EM (Naive focus)  CD4_EM  CD4_FH
+```{r}
+ds <- list(Durvalumab = density(PT_2[names(PT_2) %in% Durvalumab_Cells]),
+           Durvalumab_Tremelimumab = density(PT_2[names(PT_2) %in% Durvalumab_Tremelimumab_Cells]))
+
+
+# Scale the pseudotime from 0 to 100
+ds$Durvalumab$x <- rescale(ds$Durvalumab$x, to = c(0, 100))
+ds$Durvalumab_Tremelimumab$x <- rescale(ds$Durvalumab_Tremelimumab$x, to = c(0, 100))
+
+xlim <- range(c(ds$Durvalumab$x, ds$Durvalumab_Tremelimumab$x))
+ylim <- range(c(ds$Durvalumab$y, ds$Durvalumab_Tremelimumab$y))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(ds$Durvalumab$x), ds$Durvalumab$x, max(ds$Durvalumab$x)), c(0, ds$Durvalumab$y, 0),
+  col = alpha(Density_colors[1], alpha = .5))
+
+polygon(c(min(ds$Durvalumab_Tremelimumab$x), ds$Durvalumab$x, max(ds$Durvalumab$x)), c(0, ds$Durvalumab_Tremelimumab$y, 0), # 2 midlle ones wrong?
+        col = alpha(Density_colors[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab (aPD-L1)", "Durvalumab-Tremelimumab (aPD-L1/aCTLA4)"), 
+       fill = alpha(Density_colors, alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+Lineage3: CD4_EM (Naive focus)  CD4_EM  CD4_Th17
+```{r}
+ds <- list(Durvalumab = density(PT_3[names(PT_3) %in% Durvalumab_Cells]),
+           Durvalumab_Tremelimumab = density(PT_3[names(PT_3) %in% Durvalumab_Tremelimumab_Cells]))
+
+# Scale the pseudotime from 0 to 100
+ds$Durvalumab$x <- rescale(ds$Durvalumab$x, to = c(0, 100))
+ds$Durvalumab_Tremelimumab$x <- rescale(ds$Durvalumab_Tremelimumab$x, to = c(0, 100))
+
+xlim <- range(c(ds$Durvalumab$x, ds$Durvalumab_Tremelimumab$x))
+ylim <- range(c(ds$Durvalumab$y, ds$Durvalumab_Tremelimumab$y))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(ds$Durvalumab$x), ds$Durvalumab$x, max(ds$Durvalumab$x)), c(0, ds$Durvalumab$y, 0),
+  col = alpha(Density_colors[1], alpha = .5))
+
+polygon(c(min(ds$Durvalumab_Tremelimumab$x), ds$Durvalumab$x, max(ds$Durvalumab$x)), c(0, ds$Durvalumab_Tremelimumab$y, 0), # 2 midlle ones wrong?
+        col = alpha(Density_colors[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab (aPD-L1)", "Durvalumab-Tremelimumab (aPD-L1/aCTLA4)"),
+       fill = alpha(Density_colors, alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage3: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th17", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+Gene-expression over pseudotime plots
+
+```{r}
+metadata.df  <- HEN_CD4_Biopsy@meta.data %>%
+  tibble::rownames_to_column(var = "Cell") %>%
+  dplyr::select(Cell, slingPseudotime_1, slingPseudotime_2, slingPseudotime_3) %>%
+  tidyr::gather(key = "Lineage", value = "time", -Cell) %>%
+  dplyr::filter(!is.na(time))
+
+
+
+TF.up  <- c("PECAM1","FHIT", "NOSIP", "LDHB","LEF1", "SELL","TCF7", "CCR7", "IL7R","S1PR1", "CD44",
+           "TBX21","CXCL13", "FURIN","BHLHE40","KLRB1",
+            "IL17A","RORC", "IL23R","CAPG", "CTSH", 
+            "BCL6","CXCR5", "ICA1","GNG4", "NMB",
+            "PDCD1","HAVCR2", "LAG3", 
+           "ICOS","CTLA4","FOXP3", "IL2RA", "IKZF2", "TNFRSF9", "IL1R2", "LAIR2", "IL1R1")
+
+up.df <- data.frame()
+
+for(TF in TF.up) {
+    for(cv in c("slingPseudotime_1","slingPseudotime_2","slingPseudotime_3")) {
+        df.use  <- metadata.df %>%
+            dplyr::filter(Lineage == cv) %>%
+            tibble::column_to_rownames(var = "Cell")
+        
+        cells.use  <- rownames(df.use)
+        df <- tibble(cellname = cells.use,
+                     expr = HEN_CD4_Biopsy[['RNA']]@data[TF,cells.use],
+                     time = df.use[cells.use, "time"],
+                     Lineage = cv,
+                     TFname = TF)
+        
+        up.df <- bind_rows(up.df, df)
+  }
+}
+```
+
+
+
+```{r}
+pdf("/Users/u0137395/Desktop/CD4traj_genes_alongpseudotime_tumor.pdf", width = 15, height = 15)
+
+ggplot(up.df, aes( x = time, y = expr,colour = as.factor(Lineage)))+
+geom_smooth(method = "loess", aes(linetype = Lineage)) +
+    theme_linedraw() + theme_light() +
+    scale_color_manual(values = c("black","black","black")) +
+theme(
+panel.grid.major.x = element_blank(),
+panel.grid.minor.x = element_blank(),
+          panel.grid.major.y = element_line(size = 0.5),
+          panel.grid.minor.y = element_line(size = 0.5),
+          panel.border = element_rect(colour = "black", fill=NA, size=1)
+
+) + guides(col = guide_legend(ncol = 3)) + theme_classic() +
+    facet_wrap(~ TFname, scales = "free_y", ncol = 3)
+dev.off()
+```
+
+
+
+
+```{r}
+pdf("/Users/u0137395/Desktop/CD4_Lineage_Densities.pdf", width = 15, height = 10)
+
+ds <- list(Durvalumab = density(PT_1[names(PT_1) %in% Durvalumab_Cells]),
+           Durvalumab_Tremelimumab = density(PT_1[names(PT_1) %in% Durvalumab_Tremelimumab_Cells]))
+
+
+# Scale the pseudotime from 0 to 100
+ds$Durvalumab$x <- rescale(ds$Durvalumab$x, to = c(0, 100))
+ds$Durvalumab_Tremelimumab$x <- rescale(ds$Durvalumab_Tremelimumab$x, to = c(0, 100))
+
+xlim <- range(c(ds$Durvalumab$x, ds$Durvalumab_Tremelimumab$x))
+ylim <- range(c(ds$Durvalumab$y, ds$Durvalumab_Tremelimumab$y))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(ds$Durvalumab$x), ds$Durvalumab$x, max(ds$Durvalumab$x)), c(0, ds$Durvalumab$y, 0),
+  col = alpha(Density_colors[1], alpha = .5))
+
+polygon(c(min(ds$Durvalumab_Tremelimumab$x), ds$Durvalumab$x, max(ds$Durvalumab$x)), c(0, ds$Durvalumab_Tremelimumab$y, 0), # 2 midlle ones wrong?
+        col = alpha(Density_colors[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab (aPD-L1)", "Durvalumab-Tremelimumab (aPD-L1/aCTLA4)"), 
+       fill = alpha(Density_colors, alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 ", cex.main = 0.75, adj=0, line = 0.25)
+
+ds <- list(Durvalumab = density(PT_2[names(PT_2) %in% Durvalumab_Cells]),
+           Durvalumab_Tremelimumab = density(PT_2[names(PT_2) %in% Durvalumab_Tremelimumab_Cells]))
+
+
+# Scale the pseudotime from 0 to 100
+ds$Durvalumab$x <- rescale(ds$Durvalumab$x, to = c(0, 100))
+ds$Durvalumab_Tremelimumab$x <- rescale(ds$Durvalumab_Tremelimumab$x, to = c(0, 100))
+
+xlim <- range(c(ds$Durvalumab$x, ds$Durvalumab_Tremelimumab$x))
+ylim <- range(c(ds$Durvalumab$y, ds$Durvalumab_Tremelimumab$y))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(ds$Durvalumab$x), ds$Durvalumab$x, max(ds$Durvalumab$x)), c(0, ds$Durvalumab$y, 0),
+  col = alpha(Density_colors[1], alpha = .5))
+
+polygon(c(min(ds$Durvalumab_Tremelimumab$x), ds$Durvalumab$x, max(ds$Durvalumab$x)), c(0, ds$Durvalumab_Tremelimumab$y, 0), # 2 midlle ones wrong?
+        col = alpha(Density_colors[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab (aPD-L1)", "Durvalumab-Tremelimumab (aPD-L1/aCTLA4)"), 
+       fill = alpha(Density_colors, alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH", cex.main = 0.75, adj=0, line = 0.25)
+
+
+ds <- list(Durvalumab = density(PT_3[names(PT_3) %in% Durvalumab_Cells]),
+           Durvalumab_Tremelimumab = density(PT_3[names(PT_3) %in% Durvalumab_Tremelimumab_Cells]))
+
+# Scale the pseudotime from 0 to 100
+ds$Durvalumab$x <- rescale(ds$Durvalumab$x, to = c(0, 100))
+ds$Durvalumab_Tremelimumab$x <- rescale(ds$Durvalumab_Tremelimumab$x, to = c(0, 100))
+
+xlim <- range(c(ds$Durvalumab$x, ds$Durvalumab_Tremelimumab$x))
+ylim <- range(c(ds$Durvalumab$y, ds$Durvalumab_Tremelimumab$y))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(ds$Durvalumab$x), ds$Durvalumab$x, max(ds$Durvalumab$x)), c(0, ds$Durvalumab$y, 0),
+  col = alpha(Density_colors[1], alpha = .5))
+
+polygon(c(min(ds$Durvalumab_Tremelimumab$x), ds$Durvalumab$x, max(ds$Durvalumab$x)), c(0, ds$Durvalumab_Tremelimumab$y, 0), # 2 midlle ones wrong?
+        col = alpha(Density_colors[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab (aPD-L1)", "Durvalumab-Tremelimumab (aPD-L1/aCTLA4)"),
+       fill = alpha(Density_colors, alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage3: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th17", cex.main = 0.75, adj=0, line = 0.25)
+
+dev.off()
+```
+
+
+Save Seurat and SingleCellExperiment objects for further use.
+
+```{r}
+saveRDS(HEN_CD4_Biopsy, "/Path/to/RDS/Object/HEN_CD4_Biopsy_fixed.rds")
+saveRDS(sce.HEN.CD4_all_slinged, "/Path/to/RDS/Object/HEN_CD4_Biopsy_fixed_slingshot.rds")
+```
+
+
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Reload saved objects (Seurat and SingleCellExperiment) and convert for use with VeloCyto/CytoTrace. Conversion to h5Seurat and h5ad formats for use in scanpy.
+
+```{r}
+HEN_CD4_Biopsy <- readRDS("/Path/to/RDS/Object/HEN_CD4_Biopsy_fixed.rds")
+sce.HEN.CD4_all_slinged <- readRDS("/Path/to/RDS/Object/HEN_CD4_Biopsy_fixed_slingshot.rds")
+```
+
+
+Convert factor column back to character column (as scanpy complains about this for some reason)
+```{r}
+HEN_CD4_Biopsy$ann_check_alt <- as.character(HEN_CD4_Biopsy$ann_check_alt)
+```
+
+
+Convert objects using the build in functions in the Seurat package
+
+```{r}
+SaveH5Seurat(HEN_CD4_Biopsy, filename = "/Path/to/RDS/Object/sce.HEN.CD4_all_slinged.h5Seurat", overwrite = TRUE)
+Convert("/Path/to/RDS/Object/sce.HEN.CD4_all_slinged.h5Seurat", dest = "h5ad", overwrite = TRUE)
+```
+
+Additional approach for the same conversion by breaking down the Seurat-object into counts matrix (to get raw-interger counts) and the meta.data
+This was needed as only normalized counts were implemented in the h5ad object in some instances (the real reason is unclear).
+See the python script for which object was used in the end. 
+Note this approach results in the UMAP-coordinates to be lost, yet these can be added in a separate step using the main object (same cells).
+
+
+```{r}
+HEN_CD4_Biopsy_counts <- HEN_CD4_Biopsy@assays$RNA@counts
+HEN_CD4_Biopsy_meta.data <- HEN_CD4_Biopsy@meta.data
+HEN_CD4_Biopsy_raw <- CreateSeuratObject(HEN_CD4_Biopsy_counts, meta.data = HEN_CD4_Biopsy_meta.data)
+HEN_CD4_Biopsy_raw
+```
+
+
+```{r}
+SaveH5Seurat(HEN_CD4_Biopsy_raw, filename = "/Path/to/RDS/Object/sce.HEN.CD4_all_slinged_counts.h5Seurat", overwrite = TRUE)
+Convert("/Path/to/RDS/Object/sce.HEN.CD4_all_slinged_counts.h5Seurat", dest = "h5ad", overwrite = TRUE)
+```
+
+------------------------------------------------------------------------------------------------------------------------------------------
+
+TCR-scores across the trajectories
+
+```{r}
+library(Seurat)
+library(ggplot2)
+library(harmony)
+library(SingleCellExperiment)
+library(slingshot)
+library(scales)
+library(viridis)
+library(UpSetR)
+library(pheatmap)
+library(msigdbr)
+library(fgsea)
+library(knitr)
+library(gridExtra)
+library(tradeSeq)
+library(RColorBrewer)
+library(ggVennDiagram)
+library(ggpubr)
+library(scales)
+library(ineq)
+```
+
+
+Load rds-objects
+```{r}
+HEN_CD4_Biopsy <- readRDS("/Path/to/RDS/Object/HEN_CD4_Biopsy_fixed.rds")
+sce.HEN.CD4_all_slinged <- readRDS("/Path/to/RDS/Object/HEN_CD4_Biopsy_fixed_slingshot.rds")
+```
+
+Load TCR-data table
+```{r}
+HEN_TCR_data <- read.table("/Users/u0137395/Desktop/Trajectory_CD4_Amelie/Additional_files/Tcells_VDJ_DUTRELASCO.csv", header = TRUE, sep = ",")
+rownames(HEN_TCR_data) <- HEN_TCR_data$barcode_original
+```
+
+
+```{r}
+HEN_TCR_data
+```
+
+
+```{r}
+table(rownames(HEN_CD4_Biopsy@meta.data) %in% HEN_TCR_data$barcode_original)
+table(HEN_TCR_data$barcode_original %in% rownames(HEN_CD4_Biopsy@meta.data))
+```
+
+
+```{r}
+HEN_CD4_Biopsy
+```
+
+```{r}
+barcodes <- rownames(HEN_TCR_data[rownames(HEN_TCR_data) %in% rownames(HEN_CD4_Biopsy@meta.data), ])
+HEN_CD4_Biopsy$cdr3s_nt <- NA 
+HEN_CD4_Biopsy@meta.data[barcodes,  ]$cdr3s_nt <- HEN_TCR_data[barcodes, ]$cdr3s_nt 
+```
+
+
+```{r}
+HEN_CD4_Biopsy@meta.data
+```
+
+
+```{r}
+as.SlingshotDataSet(sce.HEN.CD4_all_slinged)
+```
+
+
+Lineage1: CD4_EM (Naive focus)  CD4_EM  CD4_Th1  
+Lineage2: CD4_EM (Naive focus)  CD4_EM  CD4_FH  
+Lineage3: CD4_EM (Naive focus)  CD4_EM  CD4_Th17 
+
+
+```{r}
+PT <- slingPseudotime(sce.HEN.CD4_all_slinged)
+#PT[is.na(PT)] <- 0
+head(PT)
+```
+
+Filter for lineage and NA's
+```{r}
+PT_1 <- PT[!(is.na(PT[, 1])), 1]
+PT_2 <- PT[!(is.na(PT[, 2])), 2]
+PT_3 <- PT[!(is.na(PT[, 3])), 3]
+```
+
+
+```{r}
+PT <- as.data.frame(PT)
+PT$barcode <- rownames(PT)
+PT
+```
+
+
+Link meta.data and TCR data 
+```{r}
+HEN_CD4_Biopsy_Lineage_info <- left_join(HEN_CD4_Biopsy@meta.data, PT, by = "barcode")
+HEN_CD4_Biopsy_Lineage_info
+```
+
+
+Split data on lineage
+```{r}
+HEN_CD4_Biopsy_Lineage_info_lineage_1 <- HEN_CD4_Biopsy_Lineage_info[!(is.na( HEN_CD4_Biopsy_Lineage_info$Lineage1)), ]
+HEN_CD4_Biopsy_Lineage_info_lineage_2 <- HEN_CD4_Biopsy_Lineage_info[!(is.na( HEN_CD4_Biopsy_Lineage_info$Lineage2)), ]
+HEN_CD4_Biopsy_Lineage_info_lineage_3 <- HEN_CD4_Biopsy_Lineage_info[!(is.na( HEN_CD4_Biopsy_Lineage_info$Lineage3)), ]
+```
+
+
+```{r}
+HEN_CD4_Biopsy_Lineage_info_lineage_1
+length(PT_1)
+HEN_CD4_Biopsy_Lineage_info_lineage_2
+length(PT_2)
+HEN_CD4_Biopsy_Lineage_info_lineage_3
+length(PT_3)
+```
+
+Filter all barcodes without TCR-chain
+```{r}
+table(HEN_CD4_Biopsy_Lineage_info_lineage_1$ann_check_alt, is.na(HEN_CD4_Biopsy_Lineage_info_lineage_1$cdr3s_nt))
+table(HEN_CD4_Biopsy_Lineage_info_lineage_2$ann_check_alt, is.na(HEN_CD4_Biopsy_Lineage_info_lineage_2$cdr3s_nt))
+table(HEN_CD4_Biopsy_Lineage_info_lineage_3$ann_check_alt, is.na(HEN_CD4_Biopsy_Lineage_info_lineage_3$cdr3s_nt))
+```
+
+
+Overview of the remaining data
+```{r}
+table(HEN_CD4_Biopsy_Lineage_info_lineage_1$Treatment)
+table(HEN_CD4_Biopsy_Lineage_info_lineage_1$DataType)
+table(HEN_CD4_Biopsy_Lineage_info_lineage_1$expansion)
+```
+
+Order barcodes per lineage in increasing pseudotime
+```{r}
+HEN_CD4_Biopsy_Lineage_info_lineage_1 <- HEN_CD4_Biopsy_Lineage_info_lineage_1[order(HEN_CD4_Biopsy_Lineage_info_lineage_1$Lineage1,decreasing= FALSE ), ]
+HEN_CD4_Biopsy_Lineage_info_lineage_2 <- HEN_CD4_Biopsy_Lineage_info_lineage_2[order(HEN_CD4_Biopsy_Lineage_info_lineage_2$Lineage2,decreasing= FALSE ), ]
+HEN_CD4_Biopsy_Lineage_info_lineage_3 <- HEN_CD4_Biopsy_Lineage_info_lineage_3[order(HEN_CD4_Biopsy_Lineage_info_lineage_3$Lineage3,decreasing= FALSE ), ]
+```
+
+
+rescale pseudotime from 0 to 100
+```{r}
+HEN_CD4_Biopsy_Lineage_info_lineage_1$Lineage1_scaled  <- rescale(HEN_CD4_Biopsy_Lineage_info_lineage_1$Lineage1,  to = c(0, 100))
+HEN_CD4_Biopsy_Lineage_info_lineage_2$Lineage2_scaled  <- rescale(HEN_CD4_Biopsy_Lineage_info_lineage_2$Lineage2,  to = c(0, 100))
+HEN_CD4_Biopsy_Lineage_info_lineage_3$Lineage3_scaled  <- rescale(HEN_CD4_Biopsy_Lineage_info_lineage_3$Lineage3,  to = c(0, 100))
+```
+
+
+Quantile overview of the rescaled data (min == 0, max == 100)
+```{r}
+quantile(HEN_CD4_Biopsy_Lineage_info_lineage_1$Lineage1_scaled)
+quantile(HEN_CD4_Biopsy_Lineage_info_lineage_2$Lineage2_scaled)
+quantile(HEN_CD4_Biopsy_Lineage_info_lineage_3$Lineage3_scaled)
+```
+
+Prepare dataframe for binning
+```{r}
+HEN_CD4_Biopsy_Lineage_info_lineage_1$Lineage1_bin <- ""
+HEN_CD4_Biopsy_Lineage_info_lineage_2$Lineage2_bin <- ""
+HEN_CD4_Biopsy_Lineage_info_lineage_3$Lineage3_bin <- ""
+```
+
+
+Binning barcodes in 10 bins (once per lineage dataframe)
+```{r}
+HEN_CD4_Biopsy_Lineage_info_lineage_1[HEN_CD4_Biopsy_Lineage_info_lineage_1$Lineage1_scaled <= 100, ]$Lineage1_bin <- "bin_10"
+HEN_CD4_Biopsy_Lineage_info_lineage_1[HEN_CD4_Biopsy_Lineage_info_lineage_1$Lineage1_scaled <= 90, ]$Lineage1_bin <- "bin_9"
+HEN_CD4_Biopsy_Lineage_info_lineage_1[HEN_CD4_Biopsy_Lineage_info_lineage_1$Lineage1_scaled <= 80, ]$Lineage1_bin <- "bin_8"
+HEN_CD4_Biopsy_Lineage_info_lineage_1[HEN_CD4_Biopsy_Lineage_info_lineage_1$Lineage1_scaled <= 70, ]$Lineage1_bin <- "bin_7"
+HEN_CD4_Biopsy_Lineage_info_lineage_1[HEN_CD4_Biopsy_Lineage_info_lineage_1$Lineage1_scaled <= 60, ]$Lineage1_bin <- "bin_6"
+HEN_CD4_Biopsy_Lineage_info_lineage_1[HEN_CD4_Biopsy_Lineage_info_lineage_1$Lineage1_scaled <= 50, ]$Lineage1_bin <- "bin_5"
+HEN_CD4_Biopsy_Lineage_info_lineage_1[HEN_CD4_Biopsy_Lineage_info_lineage_1$Lineage1_scaled <= 40, ]$Lineage1_bin <- "bin_4"
+HEN_CD4_Biopsy_Lineage_info_lineage_1[HEN_CD4_Biopsy_Lineage_info_lineage_1$Lineage1_scaled <= 30, ]$Lineage1_bin <- "bin_3"
+HEN_CD4_Biopsy_Lineage_info_lineage_1[HEN_CD4_Biopsy_Lineage_info_lineage_1$Lineage1_scaled <= 20, ]$Lineage1_bin <- "bin_2"
+HEN_CD4_Biopsy_Lineage_info_lineage_1[HEN_CD4_Biopsy_Lineage_info_lineage_1$Lineage1_scaled <= 10, ]$Lineage1_bin <- "bin_1"
+```
+
+
+```{r}
+HEN_CD4_Biopsy_Lineage_info_lineage_2[HEN_CD4_Biopsy_Lineage_info_lineage_2$Lineage2_scaled <= 100, ]$Lineage2_bin <- "bin_10"
+HEN_CD4_Biopsy_Lineage_info_lineage_2[HEN_CD4_Biopsy_Lineage_info_lineage_2$Lineage2_scaled <= 90, ]$Lineage2_bin <- "bin_9"
+HEN_CD4_Biopsy_Lineage_info_lineage_2[HEN_CD4_Biopsy_Lineage_info_lineage_2$Lineage2_scaled <= 80, ]$Lineage2_bin <- "bin_8"
+HEN_CD4_Biopsy_Lineage_info_lineage_2[HEN_CD4_Biopsy_Lineage_info_lineage_2$Lineage2_scaled <= 70, ]$Lineage2_bin <- "bin_7"
+HEN_CD4_Biopsy_Lineage_info_lineage_2[HEN_CD4_Biopsy_Lineage_info_lineage_2$Lineage2_scaled <= 60, ]$Lineage2_bin <- "bin_6"
+HEN_CD4_Biopsy_Lineage_info_lineage_2[HEN_CD4_Biopsy_Lineage_info_lineage_2$Lineage2_scaled <= 50, ]$Lineage2_bin <- "bin_5"
+HEN_CD4_Biopsy_Lineage_info_lineage_2[HEN_CD4_Biopsy_Lineage_info_lineage_2$Lineage2_scaled <= 40, ]$Lineage2_bin <- "bin_4"
+HEN_CD4_Biopsy_Lineage_info_lineage_2[HEN_CD4_Biopsy_Lineage_info_lineage_2$Lineage2_scaled <= 30, ]$Lineage2_bin <- "bin_3"
+HEN_CD4_Biopsy_Lineage_info_lineage_2[HEN_CD4_Biopsy_Lineage_info_lineage_2$Lineage2_scaled <= 20, ]$Lineage2_bin <- "bin_2"
+HEN_CD4_Biopsy_Lineage_info_lineage_2[HEN_CD4_Biopsy_Lineage_info_lineage_2$Lineage2_scaled <= 10, ]$Lineage2_bin <- "bin_1"
+```
+
+
+```{r}
+HEN_CD4_Biopsy_Lineage_info_lineage_3[HEN_CD4_Biopsy_Lineage_info_lineage_3$Lineage3_scaled <= 100, ]$Lineage3_bin <- "bin_10"
+HEN_CD4_Biopsy_Lineage_info_lineage_3[HEN_CD4_Biopsy_Lineage_info_lineage_3$Lineage3_scaled <= 90, ]$Lineage3_bin <- "bin_9"
+HEN_CD4_Biopsy_Lineage_info_lineage_3[HEN_CD4_Biopsy_Lineage_info_lineage_3$Lineage3_scaled <= 80, ]$Lineage3_bin <- "bin_8"
+HEN_CD4_Biopsy_Lineage_info_lineage_3[HEN_CD4_Biopsy_Lineage_info_lineage_3$Lineage3_scaled <= 70, ]$Lineage3_bin <- "bin_7"
+HEN_CD4_Biopsy_Lineage_info_lineage_3[HEN_CD4_Biopsy_Lineage_info_lineage_3$Lineage3_scaled <= 60, ]$Lineage3_bin <- "bin_6"
+HEN_CD4_Biopsy_Lineage_info_lineage_3[HEN_CD4_Biopsy_Lineage_info_lineage_3$Lineage3_scaled <= 50, ]$Lineage3_bin <- "bin_5"
+HEN_CD4_Biopsy_Lineage_info_lineage_3[HEN_CD4_Biopsy_Lineage_info_lineage_3$Lineage3_scaled <= 40, ]$Lineage3_bin <- "bin_4"
+HEN_CD4_Biopsy_Lineage_info_lineage_3[HEN_CD4_Biopsy_Lineage_info_lineage_3$Lineage3_scaled <= 30, ]$Lineage3_bin <- "bin_3"
+HEN_CD4_Biopsy_Lineage_info_lineage_3[HEN_CD4_Biopsy_Lineage_info_lineage_3$Lineage3_scaled <= 20, ]$Lineage3_bin <- "bin_2"
+HEN_CD4_Biopsy_Lineage_info_lineage_3[HEN_CD4_Biopsy_Lineage_info_lineage_3$Lineage3_scaled <= 10, ]$Lineage3_bin <- "bin_1"
+```
+
+
+Only consider the 5-prime data (as the 3-prime has no TCR), so this filter should not do anything in theory
+```{r}
+HEN_CD4_Biopsy_Lineage_info_lineage_1 <- HEN_CD4_Biopsy_Lineage_info_lineage_1[HEN_CD4_Biopsy_Lineage_info_lineage_1$DataType ==  "5prime", ]
+HEN_CD4_Biopsy_Lineage_info_lineage_2 <- HEN_CD4_Biopsy_Lineage_info_lineage_2[HEN_CD4_Biopsy_Lineage_info_lineage_2$DataType ==  "5prime", ]
+HEN_CD4_Biopsy_Lineage_info_lineage_3 <- HEN_CD4_Biopsy_Lineage_info_lineage_3[HEN_CD4_Biopsy_Lineage_info_lineage_3$DataType ==  "5prime", ]
+```
+
+
+Filter cells without TCR (which makes the previous step a bit redundant as this means all the 3-prime cells by default)
+```{r}
+HEN_CD4_Biopsy_Lineage_info_lineage_1 <- HEN_CD4_Biopsy_Lineage_info_lineage_1[!is.na(HEN_CD4_Biopsy_Lineage_info_lineage_1$cdr3s_nt), ]
+HEN_CD4_Biopsy_Lineage_info_lineage_2 <- HEN_CD4_Biopsy_Lineage_info_lineage_2[!is.na(HEN_CD4_Biopsy_Lineage_info_lineage_2$cdr3s_nt), ]
+HEN_CD4_Biopsy_Lineage_info_lineage_3 <- HEN_CD4_Biopsy_Lineage_info_lineage_3[!is.na(HEN_CD4_Biopsy_Lineage_info_lineage_3$cdr3s_nt), ]
+```
+
+
+```{r}
+HEN_CD4_Biopsy_Lineage_info_lineage_1
+HEN_CD4_Biopsy_Lineage_info_lineage_2
+HEN_CD4_Biopsy_Lineage_info_lineage_3
+```
+
+
+----------Plots in testing phase (Per Lineage unstratified)---------------
+
+Reformat the dataframes for TCR-lineage plotting
+```{r}
+# Per Lineage
+TCRmetrics_lineage_1 <- HEN_CD4_Biopsy_Lineage_info_lineage_1 %>% group_by(Lineage1_bin, cdr3s_nt) %>%dplyr:: summarise(Count_TCR = n())
+colnames(TCRmetrics_lineage_1) <- c("lineage_bin", "cdr3s_nt", "Count_TCR")
+TCRmetrics_lineage_1$lineage_bin <- paste0(TCRmetrics_lineage_1$lineage_bin)
+
+TCRmetrics_lineage_2 <- HEN_CD4_Biopsy_Lineage_info_lineage_2 %>% group_by(Lineage2_bin, cdr3s_nt) %>%dplyr:: summarise(Count_TCR = n())
+colnames(TCRmetrics_lineage_2) <- c("lineage_bin", "cdr3s_nt", "Count_TCR")
+TCRmetrics_lineage_2$lineage_bin <- paste0(TCRmetrics_lineage_2$lineage_bin)
+
+TCRmetrics_lineage_3 <- HEN_CD4_Biopsy_Lineage_info_lineage_3 %>% group_by(Lineage3_bin, cdr3s_nt) %>%dplyr:: summarise(Count_TCR = n())
+colnames(TCRmetrics_lineage_3) <- c("lineage_bin", "cdr3s_nt", "Count_TCR")
+TCRmetrics_lineage_3$lineage_bin <- paste0(TCRmetrics_lineage_3$lineage_bin)
+```
+
+
+
+```{r}
+summary(TCRmetrics_lineage_1$Count_TCR)
+summary(TCRmetrics_lineage_2$Count_TCR)
+summary(TCRmetrics_lineage_3$Count_TCR)
+```
+
+```{r}
+TCRmetrics_lineage_1
+TCRmetrics_lineage_2
+TCRmetrics_lineage_3
+```
+
+
+```{r}
+# Celltype IDs per patient (so we cannot do this, yet do this in bins for the analysis per lineage)
+# What is the start frame here?
+ids <- c("bin_1","bin_2", "bin_3", "bin_4", "bin_5", "bin_6", "bin_7", "bin_8", "bin_9", "bin_10")
+
+ids
+```
+
+
+```{r}
+#empty list
+test_lineage_1 <- c()
+test_lineage_2 <- c()
+test_lineage_3 <- c()
+
+
+# List of lists, basically
+test_lineage_1$lineage_bin <- ids
+test_lineage_2$lineage_bin <- ids
+test_lineage_3$lineage_bin <- ids
+```
+
+
+```{r}
+# Initialieze values
+test_lineage_1$clonality <- "NA"
+test_lineage_1$richness <- "NA"
+test_lineage_1$inverse_Simpson <- "NA"
+test_lineage_1$gini.ineq <- "NA"
+
+test_lineage_2$clonality <- "NA"
+test_lineage_2$richness <- "NA"
+test_lineage_2$inverse_Simpson <- "NA"
+test_lineage_2$gini.ineq <- "NA"
+
+test_lineage_3$clonality <- "NA"
+test_lineage_3$richness <- "NA"
+test_lineage_3$inverse_Simpson <- "NA"
+test_lineage_3$gini.ineq <- "NA"
+```
+
+
+Perform TCR-scoring on the TCR-data per lineage
+```{r}
+# Loop through the Patient_CellType list
+for (i in 1:length(ids)){
+	vdj_sample <- ids[i]
+	clonotypes <- TCRmetrics_lineage_1 %>% dplyr::filter(lineage_bin == vdj_sample & Count_TCR != 0)
+	clonotypes$Count_TCR <- clonotypes$Count_TCR
+	barcodes_with_clonotype <- sum(clonotypes$Count_TCR)
+	clonotypes$p <- (clonotypes$Count_TCR)/barcodes_with_clonotype
+	p_logp <- clonotypes$p * log(clonotypes$p)
+	H <- sum(p_logp) * -1
+	N <- length(clonotypes$cdr3s_nt)
+	logN <- log(N)
+	eveness <- H / logN
+	clonality <- 1 - eveness
+	inverse_Simpson <- 1/ (sum((clonotypes$p)^2))
+	diversity_vector <- c(H, eveness, clonality, inverse_Simpson)
+	test_lineage_1$eveness[i] <- eveness
+	test_lineage_1$clonality[i] <- clonality
+	test_lineage_1$inverse_Simpson[i] <- inverse_Simpson
+	test_lineage_1$richness[i] <- nrow(clonotypes)/barcodes_with_clonotype
+	test_lineage_1$gini.ineq[i] <- ineq(clonotypes$Count_TCR, parameter = NULL, type = "Gini", na.rm = TRUE)
+}
+
+
+
+# Loop through the Patient_CellType list
+for (i in 1:length(ids)){
+	vdj_sample <- ids[i]
+	clonotypes <- TCRmetrics_lineage_2 %>% dplyr::filter(lineage_bin == vdj_sample & Count_TCR != 0)
+	clonotypes$Count_TCR <- clonotypes$Count_TCR
+	barcodes_with_clonotype <- sum(clonotypes$Count_TCR)
+	clonotypes$p <- (clonotypes$Count_TCR)/barcodes_with_clonotype
+	p_logp <- clonotypes$p * log(clonotypes$p)
+	H <- sum(p_logp) * -1
+	N <- length(clonotypes$cdr3s_nt)
+	logN <- log(N)
+	eveness <- H / logN
+	clonality <- 1 - eveness
+	inverse_Simpson <- 1/ (sum((clonotypes$p)^2))
+	diversity_vector <- c(H, eveness, clonality, inverse_Simpson)
+	test_lineage_2$eveness[i] <- eveness
+	test_lineage_2$clonality[i] <- clonality
+	test_lineage_2$inverse_Simpson[i] <- inverse_Simpson
+	test_lineage_2$richness[i] <- nrow(clonotypes)/barcodes_with_clonotype
+	test_lineage_2$gini.ineq[i] <- ineq(clonotypes$Count_TCR, parameter = NULL, type = "Gini", na.rm = TRUE)
+}
+
+
+
+# Loop through the Patient_CellType list
+for (i in 1:length(ids)){
+	vdj_sample <- ids[i]
+	clonotypes <- TCRmetrics_lineage_3 %>% dplyr::filter(lineage_bin == vdj_sample & Count_TCR != 0)
+	clonotypes$Count_TCR <- clonotypes$Count_TCR
+	barcodes_with_clonotype <- sum(clonotypes$Count_TCR)
+	clonotypes$p <- (clonotypes$Count_TCR)/barcodes_with_clonotype
+	p_logp <- clonotypes$p * log(clonotypes$p)
+	H <- sum(p_logp) * -1
+	N <- length(clonotypes$cdr3s_nt)
+	logN <- log(N)
+	eveness <- H / logN
+	clonality <- 1 - eveness
+	inverse_Simpson <- 1/ (sum((clonotypes$p)^2))
+	diversity_vector <- c(H, eveness, clonality, inverse_Simpson)
+	test_lineage_3$eveness[i] <- eveness
+	test_lineage_3$clonality[i] <- clonality
+	test_lineage_3$inverse_Simpson[i] <- inverse_Simpson
+	test_lineage_3$richness[i] <- nrow(clonotypes)/barcodes_with_clonotype
+	test_lineage_3$gini.ineq[i] <- ineq(clonotypes$Count_TCR, parameter = NULL, type = "Gini", na.rm = TRUE)
+}
+```
+
+
+
+```{r}
+bins <- c(0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100)
+```
+
+```{r}
+test_lineage_1$clonality
+```
+
+
+Create TCR-density plots below
+
+TCR-Dens
+```{r}
+xlim <- range(c(0, 100))
+ylim <- range(c(0, min(max(as.double(test_lineage_1$clonality) * 1.5), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime (scaled)", ylab = "Clonality",  cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_1$clonality), 0), col = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5))
+
+legend("topleft", legend = c("Lineage 1"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 (Clonality)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_1$clonality)), type = "o", xlab = "Pseudotime (scaled)", ylab = "Clonality", col = "black", pch = 19, cex.axis=0.75, cex.main = 0.75)
+
+legend("topleft", legend = c("Lineage 1"), 
+       fill = "black", bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 (Clonality)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+
+```{r}
+xlim <- range(c(0, 100))
+ylim <- range(c(0, min(max(as.double(test_lineage_2$clonality) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_2$clonality, 0)), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+legend("topleft", legend = c("Lineage 2"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Clonality)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_2$clonality)), type = "o", xlab = "Pseudotime (scaled)", ylab = "Clonality", col = "black", pch = 19, cex.axis=0.75, cex.main = 0.75)
+
+legend("topleft", legend = c("Lineage 2"), 
+       fill = "black", bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Clonality)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+
+```{r}
+xlim <- range(c(0, 100))
+ylim <- range(c(0, min(max(as.double(test_lineage_3$clonality) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_3$clonality), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+legend("topleft", legend = c("Lineage 3"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th17 (Clonality)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_3$clonality)), type = "o", xlab = "Pseudotime (scaled)", ylab = "Clonality", col = "black", pch = 19, cex.axis=0.75, cex.main = 0.75)
+
+legend("topleft", legend = c("Lineage 3"), 
+       fill = "black", bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th17 (Clonality)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+
+Richness plots
+```{r}
+xlim <- range(c(0, 100))
+ylim <- range(c(0, min(max(as.double(test_lineage_1$richness) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_1$richness), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+legend("topleft", legend = c("Lineage 1"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 (Richness)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_1$richness)), type = "o", xlab = "Pseudotime (scaled)", ylab = "Richness", col = "black", pch = 19, cex.axis=0.75, cex.main = 0.75)
+
+legend("topleft", legend = c("Lineage 1"), 
+       fill = "black", bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1  (Richness)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_2$richness) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_2$richness), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+legend("topleft", legend = c("Lineage 2"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Richness)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_2$richness)), type = "o", xlab = "Pseudotime (scaled)", ylab = "Richness", col = "black", pch = 19, cex.axis=0.75, cex.main = 0.75)
+
+legend("topleft", legend = c("Lineage 2"), 
+       fill = "black", bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Richness)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+
+```{r}
+xlim <- range(c(0, 100))
+ylim <- range(c(0, min(max(as.double(test_lineage_3$richness) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_3$richness), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+legend("topleft", legend = c("Lineage 3"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th17 (Richness)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_3$richness)), type = "o", xlab = "Pseudotime (scaled)", ylab = "Richness", col = "black", pch = 19, cex.axis=0.75, cex.main = 0.75)
+
+legend("topleft", legend = c("Lineage 3"), 
+       fill = "black", bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th17 (Richness)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+
+Gini-Index plots
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_1$gini.ineq) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_1$gini.ineq), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+legend("topleft", legend = c("Lineage 1"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 (Gini-Index)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_1$gini.ineq)), type = "o", xlab = "Pseudotime (scaled)", ylab = "Gini-Index", col = "black", pch = 19, cex.axis=0.75, cex.main = 0.75)
+
+legend("topleft", legend = c("Lineage 1"), 
+       fill = "black", bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 (Gini-Index)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_2$gini.ineq) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_2$gini.ineq), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+legend("topleft", legend = c("Lineage 2"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Gini-Index)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_2$gini.ineq)), type = "o", xlab = "Pseudotime (scaled)", ylab = "Gini-Index", col = "black", pch = 19, cex.axis=0.75, cex.main = 0.75)
+
+legend("topleft", legend = c("Lineage 2"), 
+       fill = "black", bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Gini-Index)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_3$gini.ineq) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_3$gini.ineq), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+legend("topleft", legend = c("Lineage 3"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th17 (Gini-Index)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_3$gini.ineq)), type = "o", xlab = "Pseudotime (scaled)", ylab = "Gini-Index", col = "black", pch = 19, cex.axis=0.75, cex.main = 0.75)
+
+legend("topleft", legend = c("Lineage 3"), 
+       fill = "black", bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th17 (Gini-Index)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+
+
+Inverse-Simpson plots
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_1$inverse_Simpson) * 1.5))))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_1$inverse_Simpson), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+legend("topleft", legend = c("Lineage 1"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 (Inverse Simpson)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_1$inverse_Simpson)), type = "o", xlab = "Pseudotime (scaled)", ylab = "Inverse Simpson", col = "black", pch = 19, cex.axis=0.75, cex.main = 0.75)
+
+legend("topleft", legend = c("Lineage 1"), 
+       fill = "black", bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 (Inverse Simpson)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_2$inverse_Simpson) * 1.5))))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_2$inverse_Simpson), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+legend("topleft", legend = c("Lineage 2"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Inverse Simpson)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_2$inverse_Simpson)), type = "o", xlab = "Pseudotime (scaled)", ylab = "Inverse Simpson", col = "black", pch = 19, cex.axis=0.75, cex.main = 0.75)
+
+legend("topleft", legend = c("Lineage 2"), 
+       fill = "black", bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Inverse Simpson)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_3$inverse_Simpson) * 1.5))))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_3$inverse_Simpson), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+legend("topleft", legend = c("Lineage 3"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th17 (Inverse Simpson)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_3$inverse_Simpson)), type = "o", xlab = "Pseudotime (scaled)", ylab = "Inverse Simpson", col = "black", pch = 19, cex.axis=0.75, cex.main = 0.75)
+
+legend("topleft", legend = c("Lineage 3"), 
+       fill = "black", bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th17 (Inverse Simpson)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+TCR-density plots, stratify on Treatment
+
+
+```{r}
+table(HEN_CD4_Biopsy_Lineage_info_lineage_1$Treatment)
+```
+
+
+
+```{r}
+# Per Lineage
+TCRmetrics_lineage_1_Treatment <- HEN_CD4_Biopsy_Lineage_info_lineage_1 %>% group_by(Treatment, Lineage1_bin, cdr3s_nt) %>%dplyr:: summarise(Count_TCR = n())
+colnames(TCRmetrics_lineage_1_Treatment) <- c("Treatment", "lineage_bin", "cdr3s_nt", "Count_TCR")
+TCRmetrics_lineage_1_Treatment$Treatment_lineage_bin <- paste0(TCRmetrics_lineage_1_Treatment$Treatment, "_", TCRmetrics_lineage_1_Treatment$lineage_bin)
+
+TCRmetrics_lineage_2_Treatment <- HEN_CD4_Biopsy_Lineage_info_lineage_2 %>% group_by(Treatment, Lineage2_bin, cdr3s_nt) %>%dplyr:: summarise(Count_TCR = n())
+colnames(TCRmetrics_lineage_2_Treatment) <- c("Treatment", "lineage_bin", "cdr3s_nt", "Count_TCR")
+TCRmetrics_lineage_2_Treatment$Treatment_lineage_bin <- paste0(TCRmetrics_lineage_2_Treatment$Treatment, "_", TCRmetrics_lineage_2_Treatment$lineage_bin)
+
+TCRmetrics_lineage_3_Treatment <- HEN_CD4_Biopsy_Lineage_info_lineage_3 %>% group_by(Treatment, Lineage3_bin, cdr3s_nt) %>%dplyr:: summarise(Count_TCR = n())
+colnames(TCRmetrics_lineage_3_Treatment) <- c("Treatment", "lineage_bin", "cdr3s_nt", "Count_TCR")
+TCRmetrics_lineage_3_Treatment$Treatment_lineage_bin <- paste0(TCRmetrics_lineage_3_Treatment$Treatment, "_", TCRmetrics_lineage_3_Treatment$lineage_bin)
+```
+
+
+
+
+```{r}
+# Celltype IDs per patient (so we cannot do this, yet do this in bins for the analysis per lineage)
+# What is the start frame here?
+ids_Treatment <- c("Durvalumab_bin_1", "Durvalumab_bin_2", "Durvalumab_bin_3", "Durvalumab_bin_4", "Durvalumab_bin_5", 
+                   "Durvalumab_bin_6", "Durvalumab_bin_7", "Durvalumab_bin_8", "Durvalumab_bin_9", "Durvalumab_bin_10", 
+                   "Durvalumab-Tremelimumab_bin_1", "Durvalumab-Tremelimumab_bin_2", "Durvalumab-Tremelimumab_bin_3",
+                   "Durvalumab-Tremelimumab_bin_4", "Durvalumab-Tremelimumab_bin_5", "Durvalumab-Tremelimumab_bin_6", 
+                   "Durvalumab-Tremelimumab_bin_7", "Durvalumab-Tremelimumab_bin_8", "Durvalumab-Tremelimumab_bin_9",
+                   "Durvalumab-Tremelimumab_bin_10")
+
+ids_Treatment
+```
+
+
+```{r}
+#empty list
+test_lineage_1_Treatment <- c()
+test_lineage_2_Treatment <- c()
+test_lineage_3_Treatment <- c()
+
+
+# List of lists, basically
+test_lineage_1_Treatment$Treatment_lineage_bin <- ids_Treatment
+test_lineage_2_Treatment$Treatment_lineage_bin <- ids_Treatment
+test_lineage_3_Treatment$Treatment_lineage_bin <- ids_Treatment
+```
+
+
+```{r}
+# Initialieze values
+test_lineage_1_Treatment$clonality <- "NA"
+test_lineage_1_Treatment$richness <- "NA"
+test_lineage_1_Treatment$inverse_Simpson <- "NA"
+test_lineage_1_Treatment$gini.ineq <- "NA"
+
+test_lineage_2_Treatment$clonality <- "NA"
+test_lineage_2_Treatment$richness <- "NA"
+test_lineage_2_Treatment$inverse_Simpson <- "NA"
+test_lineage_2_Treatment$gini.ineq <- "NA"
+
+test_lineage_3_Treatment$clonality <- "NA"
+test_lineage_3_Treatment$richness <- "NA"
+test_lineage_3_Treatment$inverse_Simpson <- "NA"
+test_lineage_3_Treatment$gini.ineq <- "NA"
+```
+
+
+
+```{r}
+# Loop through the Patient_CellType list
+for (i in 1:length(ids_Treatment)){
+	vdj_sample <- ids_Treatment[i]
+	clonotypes <- TCRmetrics_lineage_1_Treatment %>% dplyr::filter(Treatment_lineage_bin == vdj_sample & Count_TCR != 0)
+	clonotypes$Count_TCR <- clonotypes$Count_TCR
+	barcodes_with_clonotype <- sum(clonotypes$Count_TCR)
+	clonotypes$p <- (clonotypes$Count_TCR)/barcodes_with_clonotype
+	p_logp <- clonotypes$p * log(clonotypes$p)
+	H <- sum(p_logp) * -1
+	N <- length(clonotypes$cdr3s_nt)
+	logN <- log(N)
+	eveness <- H / logN
+	clonality <- 1 - eveness
+	inverse_Simpson <- 1/ (sum((clonotypes$p)^2))
+	diversity_vector <- c(H, eveness, clonality, inverse_Simpson)
+	test_lineage_1_Treatment$eveness[i] <- eveness
+	test_lineage_1_Treatment$clonality[i] <- clonality
+	test_lineage_1_Treatment$inverse_Simpson[i] <- inverse_Simpson
+	test_lineage_1_Treatment$richness[i] <- nrow(clonotypes)/barcodes_with_clonotype
+	test_lineage_1_Treatment$gini.ineq[i] <- ineq::ineq(clonotypes$Count_TCR, parameter = NULL, type = "Gini", na.rm = TRUE)
+	test_lineage_1_Treatment$gini.DescTools[i] <- DescTools::Gini(clonotypes$Count_TCR, na.rm = TRUE)
+}
+
+
+
+# Loop through the Patient_CellType list
+for (i in 1:length(ids_Treatment)){
+	vdj_sample <- ids_Treatment[i]
+	clonotypes <- TCRmetrics_lineage_2_Treatment %>% dplyr::filter(Treatment_lineage_bin == vdj_sample & Count_TCR != 0)
+	clonotypes$Count_TCR <- clonotypes$Count_TCR
+	barcodes_with_clonotype <- sum(clonotypes$Count_TCR)
+	clonotypes$p <- (clonotypes$Count_TCR)/barcodes_with_clonotype
+	p_logp <- clonotypes$p * log(clonotypes$p)
+	H <- sum(p_logp) * -1
+	N <- length(clonotypes$cdr3s_nt)
+	logN <- log(N)
+	eveness <- H / logN
+	clonality <- 1 - eveness
+	inverse_Simpson <- 1/ (sum((clonotypes$p)^2))
+	diversity_vector <- c(H, eveness, clonality, inverse_Simpson)
+	test_lineage_2_Treatment$eveness[i] <- eveness
+	test_lineage_2_Treatment$clonality[i] <- clonality
+	test_lineage_2_Treatment$inverse_Simpson[i] <- inverse_Simpson
+	test_lineage_2_Treatment$richness[i] <- nrow(clonotypes)/barcodes_with_clonotype
+	test_lineage_2_Treatment$gini.ineq[i] <- ineq::ineq(clonotypes$Count_TCR, parameter = NULL, type = "Gini", na.rm = TRUE)
+	test_lineage_2_Treatment$gini.DescTools[i] <- DescTools::Gini(clonotypes$Count_TCR, na.rm = TRUE)
+}
+
+
+
+# Loop through the Patient_CellType list
+for (i in 1:length(ids_Treatment)){
+	vdj_sample <- ids_Treatment[i]
+	clonotypes <- TCRmetrics_lineage_3_Treatment %>% dplyr::filter(Treatment_lineage_bin == vdj_sample & Count_TCR != 0)
+	clonotypes$Count_TCR <- clonotypes$Count_TCR
+	barcodes_with_clonotype <- sum(clonotypes$Count_TCR)
+	clonotypes$p <- (clonotypes$Count_TCR)/barcodes_with_clonotype
+	p_logp <- clonotypes$p * log(clonotypes$p)
+	H <- sum(p_logp) * -1
+	N <- length(clonotypes$cdr3s_nt)
+	logN <- log(N)
+	eveness <- H / logN
+	clonality <- 1 - eveness
+	inverse_Simpson <- 1/ (sum((clonotypes$p)^2))
+	diversity_vector <- c(H, eveness, clonality, inverse_Simpson)
+	test_lineage_3_Treatment$eveness[i] <- eveness
+	test_lineage_3_Treatment$clonality[i] <- clonality
+	test_lineage_3_Treatment$inverse_Simpson[i] <- inverse_Simpson
+	test_lineage_3_Treatment$richness[i] <- nrow(clonotypes)/barcodes_with_clonotype
+	test_lineage_3_Treatment$gini.ineq[i] <- ineq::ineq(clonotypes$Count_TCR, parameter = NULL, type = "Gini", na.rm = TRUE)
+	test_lineage_3_Treatment$gini.DescTools[i] <- DescTools::Gini(clonotypes$Count_TCR, na.rm = TRUE)
+}
+```
+
+
+```{r}
+bins <- c(0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100)
+```
+
+
+
+Lineage1: CD4_EM (Naive focus)  CD4_EM  CD4_Th1
+Lineage2: CD4_EM (Naive focus)  CD4_EM  CD4_FH
+Lineage3: CD4_EM (Naive focus)  CD4_EM  CD4_Th17
+
+
+Clonatiy
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_1_Treatment$clonality) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_1_Treatment$clonality[1:10]), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_1_Treatment$clonality[11:20]), 0), # 2 midlle ones wrong?
+        col = alpha(brewer.pal(4, "Set1")[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 (Clonality)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_1_Treatment$clonality[1:10])), type = "o", xlab = "Pseudotime (scaled)", ylab = "Clonality", col = "midnightblue", pch = 19, ylim = c(0, max(as.double(test_lineage_1_Treatment$clonality))), cex.axis=0.75, cex.main = 0.75)
+par(new=TRUE)
+
+lines(bins, c(0, test_lineage_1_Treatment$clonality[11:20]), type = "o", col="red2", pch = 19)
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = c("midnightblue", "red2"), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 (Clonality)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_2_Treatment$clonality) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_2_Treatment$clonality[1:10]), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_2_Treatment$clonality[11:20]), 0), # 2 midlle ones wrong?
+        col = alpha(brewer.pal(4, "Set1")[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Clonality)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_2_Treatment$clonality[1:10])), type = "o", xlab = "Pseudotime (scaled)", ylab = "Clonality", col = "midnightblue", pch = 19, ylim = c(0, max(as.double(test_lineage_2_Treatment$clonality))), cex.axis=0.75, cex.main = 0.75)
+par(new=TRUE)
+
+lines(bins, c(0, test_lineage_2_Treatment$clonality[11:20]), type = "o", col="red2", pch = 19)
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = c("midnightblue", "red2"), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Clonality)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_3_Treatment$clonality) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_3_Treatment$clonality[1:10]), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_3_Treatment$clonality[11:20]), 0), # 2 midlle ones wrong?
+        col = alpha(brewer.pal(4, "Set1")[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus)  CD4_EM  CD4_Th17 (Clonality)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_3_Treatment$clonality[1:10])), type = "o", xlab = "Pseudotime (scaled)", ylab = "Clonality", col = "midnightblue", pch = 19, ylim = c(0, max(as.double(test_lineage_3_Treatment$clonality))), cex.axis=0.75, cex.main = 0.75)
+par(new=TRUE)
+lines(bins, c(0, test_lineage_3_Treatment$clonality[11:20]), type = "o", col="red2", pch = 19)
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = c("midnightblue", "red2"), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus)  CD4_EM  CD4_Th17 (Clonality)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+
+Richness plots
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_1_Treatment$richness) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_1_Treatment$richness[1:10]), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_1_Treatment$richness[11:20]), 0), # 2 midlle ones wrong?
+        col = alpha(brewer.pal(4, "Set1")[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 (Richness)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_1_Treatment$richness[1:10])), type = "o", xlab = "Pseudotime (scaled)", ylab = "Richness", col = "midnightblue", pch = 19, ylim = c(0, max(as.double(test_lineage_1_Treatment$richness))), cex.axis=0.75, cex.main = 0.75)
+par(new=TRUE)
+lines(bins, c(0, test_lineage_1_Treatment$richness[11:20]), type = "o", col="red2", pch = 19)
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = c("midnightblue", "red2"), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 (Richness)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_2_Treatment$richness) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_2_Treatment$richness[1:10]), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_2_Treatment$richness[11:20]), 0), # 2 midlle ones wrong?
+        col = alpha(brewer.pal(4, "Set1")[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Richness)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_2_Treatment$richness[1:10])), type = "o", xlab = "Pseudotime (scaled)", ylab = "Richness", col = "midnightblue", pch = 19, ylim = c(0, max(as.double(test_lineage_2_Treatment$richness))), cex.axis=0.75, cex.main = 0.75)
+par(new=TRUE)
+lines(bins, c(0, test_lineage_2_Treatment$richness[11:20]), type = "o", col="red2", pch = 19)
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = c("midnightblue", "red2"), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Richness)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_3_Treatment$richness) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_3_Treatment$richness[1:10]), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_3_Treatment$richness[11:20]), 0), # 2 midlle ones wrong?
+        col = alpha(brewer.pal(4, "Set1")[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus)  CD4_EM  CD4_Th17 (Richness)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_3_Treatment$richness[1:10])), type = "o", xlab = "Pseudotime (scaled)", ylab = "Richness", col = "midnightblue", pch = 19, ylim = c(0, max(as.double(test_lineage_3_Treatment$richness))), cex.axis=0.75, cex.main = 0.75)
+par(new=TRUE)
+lines(bins, c(0, test_lineage_3_Treatment$richness[11:20]), type = "o", col="red2", pch = 19)
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = c("midnightblue", "red2"), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus)  CD4_EM  CD4_Th17 (Richness)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+Gini-Index plots
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_1_Treatment$gini.ineq) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_1_Treatment$gini.ineq[1:10]), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_1_Treatment$gini.ineq[11:20]), 0), # 2 midlle ones wrong?
+        col = alpha(brewer.pal(4, "Set1")[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 (Gini-Index)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_1_Treatment$gini.ineq[1:10])), type = "o", xlab = "Pseudotime (scaled)", ylab = "Gini-Index", col = "midnightblue", pch = 19, ylim = c(0, max(as.double(test_lineage_1_Treatment$gini.ineq))), cex.axis=0.75, cex.main = 0.75)
+par(new=TRUE)
+lines(bins, c(0, test_lineage_1_Treatment$gini.ineq[11:20]), type = "o", col="red2", pch = 19)
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = c("midnightblue", "red2"), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 (Gini-Index)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_2_Treatment$gini.ineq) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_2_Treatment$gini.ineq[1:10]), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_2_Treatment$gini.ineq[11:20]), 0), # 2 midlle ones wrong?
+        col = alpha(brewer.pal(4, "Set1")[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Gini-Index)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_2_Treatment$gini.ineq[1:10])), type = "o", xlab = "Pseudotime (scaled)", ylab = "Gini-Index", col = "midnightblue", pch = 19, ylim = c(0, max(as.double(test_lineage_2_Treatment$gini.ineq))), cex.axis=0.75, cex.main = 0.75)
+par(new=TRUE)
+lines(bins, c(0, test_lineage_2_Treatment$gini.ineq[11:20]), type = "o", col="red2", pch = 19)
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = c("midnightblue", "red2"), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Gini-Index)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_3_Treatment$gini.ineq) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_3_Treatment$gini.ineq[1:10]), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_3_Treatment$gini.ineq[11:20]), 0), # 2 midlle ones wrong?
+        col = alpha(brewer.pal(4, "Set1")[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus)  CD4_EM  CD4_Th17 (Gini-Index)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_3_Treatment$gini.ineq[1:10])), type = "o", xlab = "Pseudotime (scaled)", ylab = "Gini-Index", col = "midnightblue", pch = 19, ylim = c(0, max(as.double(test_lineage_3_Treatment$gini.ineq))), cex.axis=0.75, cex.main = 0.75)
+par(new=TRUE)
+lines(bins, c(0, test_lineage_3_Treatment$gini.ineq[11:20]), type = "o", col="red2", pch = 19)
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = c("midnightblue", "red2"), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus)  CD4_EM  CD4_Th17 (Gini-Index)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+
+
+Inverse-Simpson plots
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_1_Treatment$inverse_Simpson) * 2))))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_1_Treatment$inverse_Simpson[1:10]), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_1_Treatment$inverse_Simpson[11:20]), 0), # 2 midlle ones wrong?
+        col = alpha(brewer.pal(4, "Set1")[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 (Inverse Simpson)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_1_Treatment$inverse_Simpson[1:10])), type = "o", xlab = "Pseudotime (scaled)", ylab = "Inverse Simpson", col = "midnightblue", pch = 19, ylim = c(0, max(as.double(test_lineage_1_Treatment$inverse_Simpson))), cex.axis=0.75, cex.main = 0.75)
+par(new=TRUE)
+lines(bins, c(0, test_lineage_1_Treatment$inverse_Simpson[11:20]), type = "o", col="red2", pch = 19)
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = c("midnightblue", "red2"), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 (Inverse Simpson)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_2_Treatment$inverse_Simpson) * 2))))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_2_Treatment$inverse_Simpson[1:10]), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_2_Treatment$inverse_Simpson[11:20]), 0), # 2 midlle ones wrong?
+        col = alpha(brewer.pal(4, "Set1")[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Inverse Simpson)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_2_Treatment$inverse_Simpson[1:10])), type = "o", xlab = "Pseudotime (scaled)", ylab = "Inverse Simpson", col = "midnightblue", pch = 19, ylim = c(0, max(as.double(test_lineage_2_Treatment$inverse_Simpson))), cex.axis=0.75, cex.main = 0.75)
+par(new=TRUE)
+lines(bins, c(0, test_lineage_2_Treatment$inverse_Simpson[11:20]), type = "o", col="red2", pch = 19)
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = c("midnightblue", "red2"), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Inverse Simpson)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+Blyn
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_3_Treatment$inverse_Simpson) * 2))))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_3_Treatment$inverse_Simpson[1:10]), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_3_Treatment$inverse_Simpson[11:20]), 0), # 2 midlle ones wrong?
+        col = alpha(brewer.pal(4, "Set1")[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus)  CD4_EM  CD4_Th17 (Inverse Simpson)", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_3_Treatment$inverse_Simpson[1:10])), type = "o", xlab = "Pseudotime (scaled)", ylab = "Inverse Simpson", col = "midnightblue", pch = 19, ylim = c(0, max(as.double(test_lineage_3_Treatment$inverse_Simpson))), cex.axis=0.75, cex.main = 0.75)
+par(new=TRUE)
+lines(bins, c(0, test_lineage_3_Treatment$inverse_Simpson[11:20]), type = "o", col="red2", pch = 19)
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = c("midnightblue", "red2"), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus)  CD4_EM  CD4_Th17 (Inverse Simpson)", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+
+Gini-Index plots (DescTools Gini)
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_1_Treatment$gini.DescTools) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_1_Treatment$gini.DescTools[1:10]), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_1_Treatment$gini.DescTools[11:20]), 0), # 2 midlle ones wrong?
+        col = alpha(brewer.pal(4, "Set1")[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 (Gini-Index (Desctools))", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_1_Treatment$gini.DescTools[1:10])), type = "o", xlab = "Pseudotime (scaled)", ylab = "Gini-Index", col = "midnightblue", pch = 19, ylim = c(0, max(as.double(test_lineage_1_Treatment$gini.DescTools))), cex.axis=0.75, cex.main = 0.75)
+par(new=TRUE)
+lines(bins, c(0, test_lineage_1_Treatment$gini.DescTools[11:20]), type = "o", col="red2", pch = 19)
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = c("midnightblue", "red2"), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 1: CD4_EM (Naive focus) -> CD4_EM -> CD4_Th1 (Gini-Index (DescTools))", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_2_Treatment$gini.DescTools) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_2_Treatment$gini.DescTools[1:10]), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_2_Treatment$gini.DescTools[11:20]), 0), # 2 midlle ones wrong?
+        col = alpha(brewer.pal(4, "Set1")[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Gini-Index (DescTools))", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_2_Treatment$gini.DescTools[1:10])), type = "o", xlab = "Pseudotime (scaled)", ylab = "Gini-Index", col = "midnightblue", pch = 19, ylim = c(0, max(as.double(test_lineage_2_Treatment$gini.DescTools))), cex.axis=0.75, cex.main = 0.75)
+par(new=TRUE)
+lines(bins, c(0, test_lineage_2_Treatment$gini.DescTools[11:20]), type = "o", col="red2", pch = 19)
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = c("midnightblue", "red2"), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 2: CD4_EM (Naive focus) -> CD4_EM -> CD4_FH (Gini-Index (DescTools))", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+```{r}
+xlim <- range(c(0, 105))
+ylim <- range(c(0, min(max(as.double(test_lineage_3_Treatment$gini.DescTools) * 2), 1)))
+
+plot(xlim, ylim, col = "white", xlab = "Pseudotime", ylab = "", cex.lab=0.5, cex.axis=0.5)
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_3_Treatment$gini.DescTools[1:10]), 0), col = alpha(brewer.pal(4, "Set1")[3], alpha = .5))
+
+polygon(c(min(bins), bins, max(bins)), c(0, c(0, test_lineage_3_Treatment$gini.DescTools[11:20]), 0), # 2 midlle ones wrong?
+        col = alpha(brewer.pal(4, "Set1")[2], alpha = .5))
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = alpha(brewer.pal(4, "Set1")[3:2], alpha = .5), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus)  CD4_EM  CD4_Th17 (Gini-Index (DescTools))", cex.main = 0.75, adj=0, line = 0.25)
+```
+
+
+```{r}
+plot(bins, c(0, as.double(test_lineage_3_Treatment$gini.DescTools[1:10])), type = "o", xlab = "Pseudotime (scaled)", ylab = "Gini-Index", col = "midnightblue", pch = 19, ylim = c(0, max(as.double(test_lineage_3_Treatment$gini.DescTools))), cex.axis=0.75, cex.main = 0.75)
+par(new=TRUE)
+lines(bins, c(0, test_lineage_3_Treatment$gini.DescTools[11:20]), type = "o", col="red2", pch = 19)
+
+legend("topleft", legend = c("Durvalumab", "Durvalumab-Tremelimub"), 
+       fill = c("midnightblue", "red2"), bty = "n", cex = 0.5, x.intersp = 1, y.intersp = 1.5)
+title("Lineage 3: CD4_EM (Naive focus)  CD4_EM  CD4_Th17 (Gini-Index (DescTools))", cex.main = 0.5, adj=0, line = 0.25)
+```
+
+
+KS-tests (On all TCR-density plot lineages and metrics plotted above)
+
+Clonality
+```{r}
+ks.test(as.double(test_lineage_1_Treatment$clonality[1:10]),
+        as.double(test_lineage_1_Treatment$clonality[11:20]),
+        exact = TRUE)
+```
+
+```{r}
+ks.test(as.double(test_lineage_2_Treatment$clonality[1:10]),
+        as.double(test_lineage_2_Treatment$clonality[11:20]),
+        exact = TRUE)
+```
+
+```{r}
+ks.test(as.double(test_lineage_3_Treatment$clonality[1:10]),
+        as.double(test_lineage_3_Treatment$clonality[11:20]),
+        exact = TRUE)
+```
+
+
+Richness
+```{r}
+ks.test(as.double(test_lineage_1_Treatment$richness[1:10]),
+        as.double(test_lineage_1_Treatment$richness[11:20]),
+        exact = TRUE)
+```
+
+```{r}
+ks.test(as.double(test_lineage_2_Treatment$richness[1:10]),
+        as.double(test_lineage_2_Treatment$richness[11:20]),
+        exact = TRUE)
+```
+
+```{r}
+ks.test(as.double(test_lineage_3_Treatment$richness[1:10]),
+        as.double(test_lineage_3_Treatment$richness[11:20]),
+        exact = TRUE)
+```
+
+
+Inverse-Simpson
+```{r}
+ks.test(as.double(test_lineage_1_Treatment$inverse_Simpson[1:10]),
+        as.double(test_lineage_1_Treatment$inverse_Simpson[11:20]),
+        exact = TRUE)
+```
+
+```{r}
+ks.test(as.double(test_lineage_2_Treatment$inverse_Simpson[1:10]),
+        as.double(test_lineage_2_Treatment$inverse_Simpson[11:20]),
+        exact = TRUE)
+```
+
+```{r}
+ks.test(as.double(test_lineage_3_Treatment$inverse_Simpson[1:10]),
+        as.double(test_lineage_3_Treatment$inverse_Simpson[11:20]),
+        exact = TRUE)
+```
+
+gini.ineq
+```{r}
+ks.test(as.double(test_lineage_1_Treatment$gini.ineq[1:10]),
+        as.double(test_lineage_1_Treatment$gini.ineq[11:20]),
+        exact = TRUE)
+```
+
+```{r}
+ks.test(as.double(test_lineage_2_Treatment$gini.ineq[1:10]),
+        as.double(test_lineage_2_Treatment$gini.ineq[11:20]),
+        exact = TRUE)
+```
+
+```{r}
+ks.test(as.double(test_lineage_3_Treatment$gini.ineq[1:10]),
+        as.double(test_lineage_3_Treatment$gini.ineq[11:20]),
+        exact = TRUE)
+```
+
+
+
+gini.DescTools
+
+```{r}
+ks.test(as.double(test_lineage_1_Treatment$gini.DescTools[1:10]),
+        as.double(test_lineage_1_Treatment$gini.DescTools[11:20]),
+        exact = TRUE)
+```
+
+```{r}
+ks.test(test_lineage_2_Treatment$gini.DescTools[1:10],
+        test_lineage_2_Treatment$gini.DescTools[11:20],
+        exact = TRUE)
+```
+
+```{r}
+ks.test(test_lineage_3_Treatment$gini.DescTools[1:10],
+        test_lineage_3_Treatment$gini.DescTools[11:20],
+        exact = TRUE)
+```
+
+-----------------------------------------------------------------------------------------------------------------------------------------------
+
+Plot Density plot of the CytoTrace results
+
+```{r}
+library(dplyr)
+library(ggplot2)
+```
+
+
+```{r}
+hen_cd4.obs <- read.csv("/Path/to/RDS/Object/CytoTraceTest.csv")
+LineageWeights <- read.csv("/Path/to/RDS/Object/LineageWeights.csv")
+LineageWeights$X <- NULL
+colnames(LineageWeights) <- c("barcodes", "CD4_Th1", "CD4_Th17", "CD4_FH")
+```
+
+```{r}
+hen_cd4.obs <- dplyr::left_join(hen_cd4.obs, LineageWeights, by = "barcodes")
+```
+
+
+```{r}
+hen_cd4.obs
+```
+
+
+```{r}
+hen_cd4.obs$ct_pseudotime <- 1 - hen_cd4.obs$ct_pseudotime
+```
+
+
+```{r}
+hen_cd4.obs
+```
+
+
+```{r}
+table(hen_cd4.obs$DataType)
+table(hen_cd4.obs$DataType2)
+```
+
+
+```{r}
+hen_cd4.obs <- hen_cd4.obs[ hen_cd4.obs$DataType == "5prime",  ]
+hen_cd4.obs <- hen_cd4.obs[ hen_cd4.obs$SampleType == "On-treatment",  ]
+```
+
+
+
+```{r}
+trajectory = "CD4_Th1"
+p = ggplot(data=hen_cd4.obs, aes(x=ct_pseudotime, color=Treatment)) +
+    geom_density(aes(weight=!!sym(trajectory))) + labs(title="Velocity pseudotime", x = "Pseudotime")
+p
+```
+
+
+order cells based on ct_pseudotime
+```{r}
+hen_cd4.obs.ct_ordered <- hen_cd4.obs[order(hen_cd4.obs$ct_pseudotime), ]
+```
+
+
+form ct_pseudotime 0 to 1
+```{r}
+ks.test(hen_cd4.obs.ct_ordered[hen_cd4.obs.ct_ordered$Treatment == "Durvalumab", ]$CD4_Th1,
+        hen_cd4.obs.ct_ordered[hen_cd4.obs.ct_ordered$Treatment != "Durvalumab", ]$CD4_Th1)
+```
+
+
+form ct_pseudotime 0.5 to 1 (set ct_pseudotime treshold below)
+```{r}
+ks.test(hen_cd4.obs.ct_ordered[(hen_cd4.obs.ct_ordered$Treatment == "Durvalumab") & (hen_cd4.obs.ct_ordered$ct_pseudotime >= 0.5), ]$CD4_Th1,
+        hen_cd4.obs.ct_ordered[(hen_cd4.obs.ct_ordered$Treatment != "Durvalumab") & (hen_cd4.obs.ct_ordered$ct_pseudotime >= 0.5), ]$CD4_Th1)
+```
+
