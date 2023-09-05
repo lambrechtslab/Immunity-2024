@@ -1,0 +1,427 @@
+# Packages
+```{r}
+library(Seurat)
+library(tidyr)
+library(dplyr)
+library(ggalluvial)
+
+outdir <- "/path/to/write/results/"
+```
+
+# Construct TCR dataframe
+```{r}
+# Read and filter Seurat Object
+Object <- readRDS("/path/T_NK_Object_TME_LN.rds")
+Tcells <- subset(Object, subset = annotation %in% c("NK_cyto", "NK_infla"), invert = T)
+All <- subset(Tcells, subset = SampleType == "Healthy", invert = T)
+
+samples <- All@meta.data %>% select(c(Patient, SampleType, Treatment, expansion_biokey)) %>% distinct()
+
+# TCR table
+All$Sampletype <- mgsub::mgsub(All$SampleType, pattern = c("LN", "Pre-treatment", "On-treatment"), replacement = c("LN On", "Tumor Pre", "Tumor On"))
+
+TCR_table <- All@meta.data %>% filter(!is.na(cdr3s_nt)) %>% mutate(pt_cdr3nt = paste0(Patient, "_", cdr3s_nt)) %>% tibble::rownames_to_column("seurat_barcode") %>% select(c(seurat_barcode, pt_cdr3nt, Patient, Treatment, expansion_biokey, Sampletype, annotation)) %>% mutate(stype = ifelse(grepl("CD4", annotation), "CD4", "CD8"))
+
+write.csv(TCR_table, paste0(outdir, "TCR_table_tumor_pre_on_LN_on.csv"), row.names = F)
+```
+
+# Patients with highest expansion values
+```{r}
+Responding_patients <- c("P1", "P6", "P5", "P7", "P8", "P9", "P13", "P14", "P16", "P19", "P17", "P20")
+```
+
+# Alluvial
+```{r}
+name <- "LN_on_TME_on"
+```
+
+## Absolute values
+```{r}
+TCR <- read.csv(paste0(outdir, "TCR_table_tumor_pre_on_LN_on.csv")) %>% filter(Patient %in% Responding_patients)
+
+TME <- TCR %>% filter(Sampletype == "Tumor On")
+LN <- TCR %>% filter(Sampletype == "LN On")
+
+# Shared TCRS tumor on - LN on
+TME_sh <- TME %>% filter(pt_cdr3nt %in% LN$pt_cdr3nt)
+n_distinct(TME_sh$pt_cdr3nt)
+
+LN_sh <- LN %>% filter(pt_cdr3nt %in% TME$pt_cdr3nt)
+n_distinct(LN_sh$pt_cdr3nt)
+
+TME_sh_freq <- TME_sh %>%
+    group_by(pt_cdr3nt, annotation, stype, Patient) %>%
+    count() %>%
+    rename(TME = annotation, stype_TME = stype, Freq_TME = n) %>%
+    ungroup()
+
+LN_sh_freq <- LN_sh %>%
+    group_by(pt_cdr3nt, annotation, stype, Patient) %>%
+    count() %>%
+    rename(LN = annotation, stype_LN = stype, Freq_LN = n) %>%
+    ungroup()
+
+# Merge
+Tcellsharing <- TME_sh_freq %>% full_join(LN_sh_freq, by = c("pt_cdr3nt", "Patient"))
+Tcellsharing2 <- Tcellsharing %>% filter(stype_LN == stype_TME)
+write.csv(Tcellsharing2, paste0(outdir, "Complete_dataframe_", name, ".csv"), row.names = F)
+
+Tcellsharing3 <- Tcellsharing2 %>% select(!c(Freq_TME, Freq_LN)) %>% group_by(TME, stype_TME, LN, stype_LN, Patient) %>% summarize(Freq_TME = n_distinct(pt_cdr3nt), Freq_LN = n_distinct(pt_cdr3nt))
+write.csv(Tcellsharing3, paste0(outdir, "TCRs_shared_", name, ".csv"), row.names = F)
+
+# Long format
+long <- to_lodes_form(Tcellsharing3, key = "loc", axes = c("LN", "TME"))
+df <- long %>% rename(TME = Freq_TME, LN = Freq_LN) %>% tidyr::pivot_longer(cols = c(TME, LN)) %>% filter(loc == name) %>% rename(Freq = value) %>% select(!name)
+write.csv(df, paste0(outdir, "TCRs_shared_", name, "_long_alluvial_format.csv"), row.names = F)
+
+```
+
+### plot per group
+```{r}
+df <- read.csv(paste0(outdir, "TCRs_shared_", name, "_long_alluvial_format.csv"))
+meta <- read.csv(paste0(outdir, "TCR_table_tumor_pre_on_LN_on.csv")) %>% select(Patient, Treatment, expansion_biokey) %>% distinct()
+df <- left_join(df, meta)
+
+df$loc <- mgsub::mgsub(df$loc, pattern = c("TME", "LN"), replacement = c("Tumor on-ICB", "tdLN on-ICB"))
+df$loc <- factor(df$loc, levels = c("tdLN on-ICB", "Tumor on-ICB"))
+
+df$Treatment <- mgsub::mgsub(df$Treatment, pattern = c("Durvalumab", "Durvalumab-Tremelimumab"), replacement = c("aPD-L1", "aPD-L1/aCTLA4"))
+
+## celltypes
+CD4_celltypes <- c("CD4_N/CM", "CD4_REG", "CD4_EM", "CD4_Th1", "CD4_FH", "CD4_Th17", "CD4_cyto")
+CD8_celltypes <- c("CD8_N/CM", "CD8_EM", "CD8_EMRA", "CD8_EX", "CD8_RM")
+
+pdf(paste0(outdir, name, "_alluvial_absolute_values.pdf"), height = 6, width = 12)
+
+CD4 <- df %>% filter(!stratum %in% CD8_celltypes)
+
+unique(CD4$stratum)
+CD4$stratum <- factor(CD4$stratum, levels = c("CD4_N/CM", "CD4_REG", "CD4_EM", "CD4_Th1", "CD4_FH", "CD4_Th17"))
+                              colors <- c("#BE9C00", "#8CAB01", "#F8766D", "#24B700", "#E18A00", "#00BE70")
+
+  plot <- ggplot(data = CD4, aes(x = loc, y = Freq, stratum = stratum, alluvium = alluvium, fill = stratum, label = stratum)) +
+      geom_flow(stat = "flow", knot.pos = 1/4, aes.flow = "forward") + 
+      geom_stratum() +
+      theme_minimal() +
+      theme(legend.position = "bottom", legend.title=element_blank()) +
+      scale_linetype_manual(values = c("blank", "solid")) +
+      scale_fill_manual(values = colors) + 
+      xlab("") +
+      ylab("Unique shared TCRs") +
+      ggtitle(name) +
+      theme(text=element_text(size=20), legend.title=element_blank())
+  
+  print(plot + theme(legend.title=element_blank()))
+  print(plot + facet_grid(~Treatment) + theme(legend.position = "bottom", legend.title=element_blank()) + theme(text=element_text(size=20), legend.title=element_blank()))
+  print(plot + facet_grid(~Treatment) + theme(legend.position = "right", legend.title=element_blank()) + theme(text=element_text(size=20), legend.title=element_blank()))
+  plot2 <- plot + facet_grid(~Treatment) + theme(legend.position = "none", legend.title=element_blank() + theme(text=element_text(size=26), legend.title=element_blank()))
+  print(plot2)
+  print(plot2 +
+        ggrepel::geom_text_repel(aes(label = ifelse(loc == levels(df$loc)[1], as.character(stratum), NA)), stat = "stratum", size = 6, direction = "y", nudge_x = -.5) + 
+        ggrepel::geom_text_repel(aes(label = ifelse(loc == levels(df$loc)[2], as.character(stratum), NA)), stat = "stratum", size = 6, direction = "y", nudge_x = .5) +
+        theme(text=element_text(size=20), legend.title=element_blank()))
+
+CD8 <- df %>% filter(!stratum %in% CD4_celltypes) 
+unique(CD8$stratum) 
+CD8$stratum <- factor(CD8$stratum, levels = c("CD8_N/CM", "CD8_EM", "CD8_EMRA", "CD8_EX", "CD8_RM"))
+                          colors <- c("#8B93FF", "#00C1AB", "#00BBDA", "#00ACFC", "#D575FE")
+
+  plot <- ggplot(data = CD8, aes(x = loc, y = Freq, stratum = stratum, alluvium = alluvium, fill = stratum, label = stratum)) +
+      geom_flow(stat = "flow", knot.pos = 1/4, aes.flow = "forward") + 
+      geom_stratum() +
+      theme_minimal() +
+      theme(legend.position = "bottom", legend.title=element_blank()) +
+      scale_linetype_manual(values = c("blank", "solid")) +
+      scale_fill_manual(values = colors) + 
+      xlab("") +
+      ylab("Unique shared TCRs") +
+      ggtitle(name) +
+      theme(text=element_text(size=20), legend.title=element_blank())
+  
+  print(plot + theme(legend.title=element_blank()))
+  print(plot + facet_grid(~Treatment) + theme(legend.position = "bottom", legend.title=element_blank()) + theme(text=element_text(size=20), legend.title=element_blank()))
+  print(plot + facet_grid(~Treatment) + theme(legend.position = "right", legend.title=element_blank()) + theme(text=element_text(size=20), legend.title=element_blank()))
+  plot2 <- plot + facet_grid(~Treatment) + theme(legend.position = "none", legend.title=element_blank() + theme(text=element_text(size=26), legend.title=element_blank()))
+  print(plot2)
+  print(plot2 +
+        ggrepel::geom_text_repel(aes(label = ifelse(loc == levels(df$loc)[1], as.character(stratum), NA)), stat = "stratum", size = 6, direction = "y", nudge_x = -.5) + 
+        ggrepel::geom_text_repel(aes(label = ifelse(loc == levels(df$loc)[2], as.character(stratum), NA)), stat = "stratum", size = 6, direction = "y", nudge_x = .5) +
+        theme(text=element_text(size=20), legend.title=element_blank()))
+dev.off() 
+
+```
+
+### plot per patient
+```{r}
+df <- read.csv(paste0(outdir, "TCRs_shared_", name, "_long_alluvial_format.csv"))
+meta <- read.csv(paste0(outdir, "TCR_table_tumor_pre_on_LN_on.csv")) %>% select(Patient, Treatment, expansion_biokey) %>% distinct()
+df <- left_join(df, meta)
+
+df$loc <- mgsub::mgsub(df$loc, pattern = c("TME", "LN"), replacement = c("Tumor on-ICB", "tdLN on-ICB"))
+df$loc <- factor(df$loc, levels = c("tdLN on-ICB", "Tumor on-ICB"))
+df$Treatment <- mgsub::mgsub(df$Treatment, pattern = c("Durvalumab", "Durvalumab-Tremelimumab"), replacement = c("aPD-L1", "aPD-L1/aCTLA4"))
+
+pdf(paste0(outdir, name, "_alluvial_absolute_values_per_patient.pdf"), height = 15, width = 20)
+
+CD4 <- df %>% filter(!stratum %in% CD8_celltypes)
+
+unique(CD4$stratum)
+CD4$stratum <- factor(CD4$stratum, levels = c("CD4_N/CM", "CD4_REG", "CD4_EM", "CD4_Th1", "CD4_FH", "CD4_Th17"))
+colors <- c("#BE9C00", "#8CAB01", "#F8766D", "#24B700", "#E18A00", "#00BE70")
+
+  plot <- ggplot(data = CD4, aes(x = loc, y = Freq, stratum = stratum, alluvium = alluvium, fill = stratum, label = stratum)) +
+      geom_flow(stat = "flow", knot.pos = 1/4, aes.flow = "forward") + 
+      geom_stratum() +
+      theme_minimal() +
+      theme(legend.position = "bottom", legend.title=element_blank()) +
+      scale_linetype_manual(values = c("blank", "solid")) +
+      scale_fill_manual(values = colors) + 
+      xlab("") +
+      ylab("Unique shared TCRs") +
+      ggtitle(name) +
+      theme(text=element_text(size=20), legend.title=element_blank())  +
+      facet_grid(rows = vars(Patient), cols = vars(Treatment), scales = "free", drop = T, switch = "y")
+
+  print(plot)
+  print(plot + theme(legend.position = "none"))
+
+CD8 <- df %>% filter(!stratum %in% CD4_celltypes) 
+unique(CD8$stratum)
+CD8$stratum <- factor(CD8$stratum, levels = c("CD8_N/CM", "CD8_EM", "CD8_EMRA", "CD8_EX", "CD8_RM"))
+                          colors <- c("#8B93FF", "#00C1AB", "#00BBDA", "#00ACFC", "#D575FE")
+
+
+  plot <- ggplot(data = CD8, aes(x = loc, y = Freq, stratum = stratum, alluvium = alluvium, fill = stratum, label = stratum)) +
+      geom_flow(stat = "flow", knot.pos = 1/4, aes.flow = "forward") + 
+      geom_stratum() +
+      theme_minimal() +
+      theme(legend.position = "bottom", legend.title=element_blank()) +
+      scale_linetype_manual(values = c("blank", "solid")) +
+      scale_fill_manual(values = colors) + 
+      xlab("") +
+      ylab("Unique shared TCRs") +
+      ggtitle(name) +
+      theme(text=element_text(size=20), legend.title=element_blank()) +
+      facet_grid(rows = vars(Patient), cols = vars(Treatment), scales = "free", drop = T, switch = "y")
+
+  print(plot)
+  print(plot + theme(legend.position = "none"))
+dev.off() 
+```
+
+## Relative values
+```{r}
+TCR <- read.csv(paste0(outdir, "TCR_table_tumor_pre_on_LN_on.csv")) %>% filter(Patient %in% Responding_patients)
+
+TME <- TCR %>% filter(Sampletype == "Tumor On")
+LN <- TCR %>% filter(Sampletype == "LN On")
+
+patients_2samples <- intersect(LN$Patient, TME$Patient)
+
+# Calculate the number of unique TCRs detected
+#LN
+ann <- LN %>% filter(Patient %in% patients_2samples) %>% group_by(Patient, stype, annotation) %>% 
+        summarize(nr_LN = n_distinct(pt_cdr3nt)) 
+tot_ln <- LN %>% filter(Patient %in% patients_2samples) %>% group_by(Patient, stype) %>% summarize(tot_LN = n_distinct(pt_cdr3nt)) %>%
+            rename(stype_LN = stype)
+nr_TCR_LN <- ann %>% left_join(tot_ln) %>% dplyr::rename(LN = annotation)
+
+#TME
+ann <- TME %>% filter(Patient %in% patients_2samples) %>% group_by(Patient, stype, annotation) %>% 
+        summarize(nr_TME = n_distinct(pt_cdr3nt)) 
+tot_TME <- TME %>% filter(Patient %in% patients_2samples) %>% group_by(Patient, stype) %>% summarize(tot_TME = n_distinct(pt_cdr3nt)) %>%
+            rename(stype_TME = stype)
+nr_TCR_TME <- ann %>% left_join(tot_TME) %>% dplyr::rename(TME = annotation)
+```
+
+```{r}
+Tcellsharing <- read.csv(paste0(outdir, "TCRs_shared_", name, ".csv"))
+Tcellsharing$combination <- paste(Tcellsharing$LN, Tcellsharing$TME, sep = "_")
+
+tmp <- Tcellsharing %>% full_join(tot_ln) %>% full_join(tot_TME) %>% ungroup
+patient_combination <- tmp %>% tidyr::expand(combination, Patient) %>% filter(!is.na(combination))
+combination_info <- Tcellsharing %>% select(LN, TME, stype_TME, stype_LN, combination) %>% distinct()     
+patient_combination <- patient_combination %>% left_join(combination_info)
+
+prop <- Tcellsharing %>% full_join(patient_combination) %>% 
+                         tidyr::replace_na(list(Freq_LN=0, Freq_TME=0)) %>% 
+                         left_join(tot_ln) %>% left_join(tot_TME) %>% 
+                         mutate(Prop_LN = Freq_LN / tot_LN, Prop_TME = Freq_TME / tot_TME)      
+
+meta <- read.csv(paste0(outdir, "TCR_table_tumor_pre_on_LN_on.csv")) %>% select(Patient, Treatment, expansion_biokey) %>% distinct()
+prop <- left_join(prop, meta)
+write.csv(prop, paste0(outdir, "TCRs_shared_", name, "_proportion_corr_CD4_CD8_Tcells.csv"), row.names = F)
+
+
+# Calculate average per group to plot
+prop_group <- prop %>% dplyr::group_by(combination, Treatment) %>% 
+              mutate(mean_prop_TME = mean(Prop_TME, na.rm = T), mean_prop_LN = mean(Prop_LN, na.rm = T)) %>% ungroup() %>% 
+              select(!c(Patient, expansion_biokey, Freq_TME, Freq_LN, tot_LN, tot_TME, Prop_LN, Prop_TME)) %>% distinct() %>% arrange(combination)
+write.csv(prop_group, paste0(outdir, "TCRs_shared_", name, "_prop_group_corr_CD4_CD8_Tcells.csv"), row.names = F)
+
+# Long format
+long <- to_lodes_form(prop_group, key = "loc", axes = c("LN", "TME"))
+df <- long %>% rename(TME = mean_prop_TME, LN = mean_prop_LN) %>% tidyr::pivot_longer(cols = c(TME, LN)) %>% filter(loc == name) %>% rename(mean_prop = value) %>% select(!name)
+write.csv(df, paste0(outdir, "TCRs_shared_", name, "_prop_group_corr_CD4_CD8_Tcells_long_alluvial_format.csv"), row.names = F)
+```
+
+### plot per group
+```{r}
+df <- read.csv(paste0(outdir, "TCRs_shared_", name, "_prop_group_corr_CD4_CD8_Tcells_long_alluvial_format.csv"))
+df$loc <- mgsub::mgsub(df$loc, pattern = c("TME", "LN"), replacement = c("Tumor on-ICB", "tdLN on-ICB"))
+df$loc <- factor(df$loc, levels = c("tdLN on-ICB", "Tumor on-ICB"))
+
+df$Treatment <- mgsub::mgsub(df$Treatment, pattern = c("Durvalumab", "Durvalumab-Tremelimumab"), replacement = c("aPD-L1", "aPD-L1/aCTLA4"))
+
+## celltypes
+CD4_celltypes <- c("CD4_N/CM", "CD4_REG", "CD4_EM", "CD4_Th1", "CD4_FH", "CD4_Th17", "CD4_cyto")
+CD8_celltypes <- c("CD8_N/CM", "CD8_EM", "CD8_EMRA", "CD8_EX", "CD8_RM")
+
+pdf(paste0(outdir, name, "_alluvial_relative_values.pdf"), height = 6, width = 12)
+
+CD4 <- df %>% filter(!stratum %in% CD8_celltypes) %>% mutate(mean_prop_0 = tidyr::replace_na(mean_prop, 0))
+
+unique(CD4$stratum) 
+CD4$stratum <- factor(CD4$stratum, levels = c("CD4_N/CM", "CD4_REG", "CD4_EM", "CD4_Th1", "CD4_FH", "CD4_Th17"))
+                              colors <- c("#BE9C00", "#8CAB01", "#F8766D", "#24B700", "#E18A00", "#00BE70")
+
+  plot <- ggplot(data = CD4, aes(x = loc, y = mean_prop_0, stratum = stratum, alluvium = alluvium, fill = stratum, label = stratum)) +
+      geom_flow(stat = "flow", knot.pos = 1/4, aes.flow = "forward") + 
+      geom_stratum() +
+      scale_fill_manual(values = colors) + 
+      xlab("") +
+      ylab("Proportion shared TCRs") +
+      ggtitle(name) +
+      theme(text=element_text(size=23),
+            legend.title=element_blank(),
+            axis.text.x = element_text(size=23, colour = "black"),
+            axis.text = element_text(colour = "black"),
+            strip.text = element_text(size = 26, colour = "black"), 
+            axis.ticks.x = element_blank(), 
+            strip.background = element_blank(), 
+            panel.border = element_blank(),
+            panel.grid.major = element_blank(), 
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.line = element_line(colour = "black")) +
+      scale_y_continuous(expand = expansion(mult = c(0, .1)))
+
+  print(plot + facet_grid(~Treatment) + theme(legend.position = "right", legend.title=element_blank()) + theme(legend.title=element_blank()))
+  plot2 <- plot + facet_grid(~Treatment) + theme(legend.position = "none", legend.title=element_blank() + theme(legend.title=element_blank()))
+  print(plot2)
+
+CD8 <- df %>% filter(!stratum %in% CD4_celltypes) %>% mutate(mean_prop_0 = tidyr::replace_na(mean_prop, 0))
+unique(CD8$stratum) 
+CD8$stratum <- factor(CD8$stratum, levels = c("CD8_N/CM", "CD8_EM", "CD8_EMRA", "CD8_EX", "CD8_RM"))
+                                colors <- c("#8B93FF", "#00C1AB", "#00BBDA", "#D575FE", "#00ACFC")
+
+  plot <- ggplot(data = CD8, aes(x = loc, y = mean_prop_0, stratum = stratum, alluvium = alluvium, fill = stratum, label = stratum)) +
+      geom_flow(stat = "flow", knot.pos = 1/4, aes.flow = "forward") + 
+      geom_stratum() +
+      scale_fill_manual(values = colors) + 
+      xlab("") +
+      ylab("Proportion shared TCRs") +
+      ggtitle(name) +
+      theme(text=element_text(size=23),
+            legend.title=element_blank(),
+            axis.text.x = element_text(size=23, colour = "black"),
+            axis.text = element_text(colour = "black"),
+            strip.text = element_text(size = 26, colour = "black"), 
+            axis.ticks.x = element_blank(), 
+            strip.background = element_blank(), 
+            panel.border = element_blank(),
+            panel.grid.major = element_blank(), 
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.line = element_line(colour = "black")) +
+      scale_y_continuous(expand = expansion(mult = c(0, .1)))
+  
+  print(plot + facet_grid(~Treatment) + theme(legend.position = "right"))
+  plot2 <- plot + facet_grid(~Treatment) + theme(legend.position = "none")
+  print(plot2)
+dev.off() 
+```
+
+### plot per patient
+```{r}
+prop <- read.csv(paste0(outdir, "TCRs_shared_", name, "_proportion_corr_CD4_CD8_Tcells.csv"))
+
+# Long format
+long <- to_lodes_form(prop, key = "loc", axes = c("LN", "TME"))
+df <- long %>% rename(TME = Prop_TME, LN = Prop_LN) %>% tidyr::pivot_longer(cols = c(TME, LN)) %>% filter(loc == name) %>% rename(mean_prop = value) %>% select(!name)
+
+df$loc <- as.character(df$loc)
+df$loc <- mgsub::mgsub(df$loc, pattern = c("TME", "LN"), replacement = c("Tumor on-ICB", "tdLN on-ICB"))
+df$loc <- factor(df$loc, levels = c("tdLN on-ICB", "Tumor on-ICB"))
+
+df$Treatment <- mgsub::mgsub(df$Treatment, pattern = c("Durvalumab", "Durvalumab-Tremelimumab"), replacement = c("aPD-L1", "aPD-L1/aCTLA4"))
+
+pdf(paste0(outdir, name, "_alluvial_relative_values_per_patient.pdf"), height = 15, width = 20)
+
+CD4 <- df %>% filter(!stratum %in% CD8_celltypes) %>% mutate(mean_prop_0 = replace_na(mean_prop, 0))
+
+unique(CD4$stratum)
+CD4$stratum <- factor(CD4$stratum, levels = c("CD4_N/CM", "CD4_REG", "CD4_EM", "CD4_Th1", "CD4_FH", "CD4_Th17"))
+colors <- c("#BE9C00", "#8CAB01", "#F8766D", "#24B700", "#E18A00", "#00BE70")
+
+  plot <- ggplot(data = CD4, aes(x = loc, y = mean_prop_0, stratum = stratum, alluvium = alluvium, fill = stratum, label = stratum)) +
+      geom_flow(stat = "flow", knot.pos = 1/4, aes.flow = "forward") + 
+      geom_stratum() +
+      theme(legend.position = "bottom", legend.title=element_blank()) +
+      scale_fill_manual(values = colors) + 
+      xlab("") +
+      ylab("Proportion shared TCRs") +
+      ggtitle(name) +
+      facet_grid(rows = vars(Patient), cols = vars(Treatment), scales = "free", drop = T, switch = "y") +
+        theme(text=element_text(size=18),
+        legend.title=element_blank(),
+        axis.text.x = element_text(size=23, colour = "black"),
+        axis.title.y = element_text(size=23, colour = "black"),
+        axis.text = element_text(colour = "black"),
+        strip.text.x = element_text(size = 26, colour = "black"), 
+        axis.ticks.x = element_blank(), 
+        strip.background = element_blank(), 
+        panel.border = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"),
+        strip.text.y.left = element_text(angle = 0, size = 23)) 
+
+  print(plot)
+  print(plot + theme(legend.position = "none"))
+
+CD8 <- df %>% filter(!stratum %in% CD4_celltypes) %>% mutate(mean_prop_0 = replace_na(mean_prop, 0))
+unique(CD8$stratum)
+CD8$stratum <- factor(CD8$stratum, levels = c("CD8_N/CM", "CD8_EM", "CD8_EMRA", "CD8_EX", "CD8_RM"))
+colors <- c("#8B93FF", "#00C1AB", "#00BBDA", "#D575FE", "#00ACFC")
+
+  plot <- ggplot(data = CD8, aes(x = loc, y = mean_prop_0, stratum = stratum, alluvium = alluvium, fill = stratum, label = stratum)) +
+      geom_flow(stat = "flow", knot.pos = 1/4, aes.flow = "forward") + 
+      geom_stratum() +
+      theme(legend.position = "bottom", legend.title=element_blank()) +
+      scale_fill_manual(values = colors) + 
+      xlab("") +
+      ylab("Proportion shared TCRs") +
+      ggtitle(name) +
+      facet_grid(rows = vars(Patient), cols = vars(Treatment), scales = "free", drop = T, switch = "y") +
+        theme(text=element_text(size=18),
+        legend.title=element_blank(),
+        axis.text.x = element_text(size=23, colour = "black"),
+        axis.title.y = element_text(size=23, colour = "black"),
+        axis.text = element_text(colour = "black"),
+        strip.text.x = element_text(size = 26, colour = "black"), 
+        axis.ticks.x = element_blank(), 
+        strip.background = element_blank(), 
+        panel.border = element_blank(),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"),
+        strip.text.y.left = element_text(angle = 0, size = 23)) 
+
+  print(plot)
+  print(plot + theme(legend.position = "none"))
+dev.off() 
+
+```
